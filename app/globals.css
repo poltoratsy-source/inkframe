@@ -1,0 +1,43 @@
+@import 'tailwindcss';
+
+/* Inkframe palette: a dark studio with one warm accent (the "pen"). */
+@theme {
+  --color-ink-950: #0f0e14;
+  --color-ink-900: #14131a;
+  --color-ink-850: #17161e;
+  --color-ink-800: #1a1922;
+  --color-ink-750: #1d1c26;
+  --color-ink-700: #211f2b;
+  --color-ink-650: #262431;
+  --color-ink-600: #2a2833;
+  --color-ink-550: #2c2a37;
+  --color-ink-500: #34313f;
+  --color-mist-500: #6f6a80;
+  --color-mist-400: #8d88a0;
+  --color-mist-300: #a9a4b8;
+  --color-mist-200: #c9c4d8;
+  --color-mist-100: #e9e6f0;
+  --color-pen: #ff8a3d;
+  --color-pen-soft: #ffb27d;
+  --color-pen-ink: #1a1208;
+  --color-ok: #9ff0b0;
+  --color-ok-bg: #2f5d3a;
+  --color-voice: #7f78c8;
+  --color-music: #4f8f7a;
+  --font-sans: Inter, 'DejaVu Sans', system-ui, sans-serif;
+}
+
+html, body { background: var(--color-ink-900); color: var(--color-mist-100); }
+body { font-family: var(--font-sans); font-size: 14px; -webkit-font-smoothing: antialiased; }
+.label { font-size: 12px; text-transform: uppercase; letter-spacing: 1.2px; color: var(--color-mist-400); font-weight: 600; }
+
+/* The pen: a new frame wipes in from the left behind a glowing orange line. */
+@keyframes reveal { from { clip-path: inset(0 100% 0 0); } to { clip-path: inset(0 0 0 0); } }
+@keyframes penmove { from { left: 0%; opacity: 1; } 92% { opacity: 1; } to { left: 100%; opacity: 0; } }
+.reveal { animation: reveal var(--pen-ms, 700ms) linear both; }
+.pen { position: absolute; top: 0; bottom: 0; width: 3px; background: var(--color-pen); box-shadow: 0 0 18px var(--color-pen); animation: penmove var(--pen-ms, 700ms) linear both; pointer-events: none; }
+@keyframes pulse-dot { 0%, 100% { box-shadow: 0 0 0 4px #ff8a3d33; } 50% { box-shadow: 0 0 0 7px #ff8a3d22; } }
+.dot-run { animation: pulse-dot 1.2s ease-in-out infinite; }
+@keyframes fade-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+.fade-in { animation: fade-in .35s ease-out both; }
+.sketchy { filter: grayscale(1) contrast(.6) brightness(1.5) sepia(.2); }

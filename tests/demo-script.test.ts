@@ -77,3 +77,8 @@ test('assembling hands out the demo film', () => {
   assert.equal(done.status, 'done');
   assert.equal(done.video, DEMO_CATALOG.video);
 });
+
+test('the work log reads in the order things happen: script, hero, voice, scenes, music', () => {
+  const end = play(project(15), buildRunScript(project(15), DEMO_CATALOG));
+  assert.deepEqual(end.log.map(l => l.id), ['read', 'script', 'hero', 'voice', 'scene-1', 'scene-2', 'scene-3', 'music', 'ready']);
+});

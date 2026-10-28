@@ -64,8 +64,6 @@ export function buildRunScript(p: ProjectState, c: DemoCatalog, speed = 1): Time
   step('script', 'Пишу сценарий и раскадровку', `«${p.title}»`); w.wait(2000);
   w.emit({ type: 'storyboard', title: p.title, scenes: board.map(({ catalog: _c, ...b }) => b) });
   done('script', `Написал сценарий: ${board.length} сцены, ${lines} реплик`.replace('сцены', board.length > 4 ? 'сцен' : 'сцены'));
-  for (const b of board) w.emit({ type: 'log.add', step: { id: `scene-${b.n}`, text: `Сцена ${b.n} — в очереди`, status: 'wait' } });
-  if (s.music !== 'none') w.emit({ type: 'log.add', step: { id: 'music', text: 'Музыка и сведение звука', status: 'wait' } });
   w.wait(400);
   if (s.hero !== 'none') { step('hero', 'Рисую героя по листу персонажа'); w.wait(1300); done('hero', 'Нарисовал героя по листу персонажа'); }
   if (s.voice !== 'none') {
@@ -73,6 +71,10 @@ export function buildRunScript(p: ProjectState, c: DemoCatalog, speed = 1): Time
     w.emit({ type: 'track', kind: 'voice', peaks: c.voicePeaks });
     done('voice', `Озвучил реплики · голос «${VOICE_NAMES[s.voice]}»`);
   }
+
+  // what is still ahead, in the order it will happen
+  for (const b of board) w.emit({ type: 'log.add', step: { id: `scene-${b.n}`, text: `Сцена ${b.n} — в очереди`, status: 'wait' } });
+  if (s.music !== 'none') w.emit({ type: 'log.add', step: { id: 'music', text: 'Музыка и сведение звука', status: 'wait' } });
 
   const perScene = 16, totalFrames = board.length * perScene, msPerScene = 8 * SKETCH_MS + 8 * COLOR_MS;
   let drawn = 0;

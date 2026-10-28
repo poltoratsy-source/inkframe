@@ -1,0 +1,12 @@
+# docker compose up --build   →   http://127.0.0.1:3700
+services:
+  inkframe:
+    build: .
+    ports:
+      - "127.0.0.1:3700:3700"   # this computer only: the settings page can write your API key
+    env_file:
+      - path: .env.local
+        required: false
+    environment:
+      INKFRAME_ENGINE: ${INKFRAME_ENGINE:-demo}
+    restart: unless-stopped

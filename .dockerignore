@@ -1,0 +1,10 @@
+node_modules
+.next
+.pages-build
+out
+projects
+demo
+.git
+.env.local
+*.log
+out-artifact

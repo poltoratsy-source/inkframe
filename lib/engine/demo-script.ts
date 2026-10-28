@@ -24,7 +24,7 @@ function writer(speed: number) {
 const pick = (count: number, available: number) =>
   Array.from({ length: count }, (_, i) => Math.round(i * (available - 1) / Math.max(1, count - 1)));
 
-export function storyboardFor(p: ProjectState, c: DemoCatalog): SceneBoard[] {
+export function storyboardFor(p: ProjectState, c: DemoCatalog): (SceneBoard & { catalog: number })[] {
   const count = sceneCountFor(p.settings.duration), base = Math.floor(p.settings.duration / count);
   let start = 0;
   return pick(count, c.scenes.length).map((ci, i) => {

@@ -31,6 +31,8 @@ export interface Scene extends SceneBoard {
   status: SceneStatus;
   frame?: string;
   frameKind?: FrameKind;
+  /** colour frames drawn so far, in order (the studio plays them back as a preview) */
+  colors: string[];
   look: Look;
   edited: boolean;
   version: number;

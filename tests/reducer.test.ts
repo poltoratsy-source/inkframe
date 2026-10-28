@@ -57,3 +57,15 @@ test('snapshot replaces the whole state; unknown scene numbers are ignored', () 
   const s = applyEvent(applyEvent(base(), board), { type: 'scene.status', n: 9, status: 'done' });
   assert.ok(s.scenes.every(sc => sc.status === 'queued'));
 });
+
+test('a scene keeps its colour frames for playback and forgets them when redrawn', () => {
+  let s = applyEvent(base(), board);
+  const f = (src: string, kind: 'sketch' | 'color') => ({ type: 'frame' as const, n: 1, kind, src, index: 1, total: 60 });
+  s = applyEvent(s, f('a-sketch', 'sketch'));
+  s = applyEvent(s, f('a', 'color'));
+  s = applyEvent(s, f('b', 'color'));
+  s = applyEvent(s, f('b', 'color'));
+  assert.deepEqual(s.scenes[0].colors, ['a', 'b']);
+  s = applyEvent(s, { type: 'scene.status', n: 1, status: 'sketch' });
+  assert.deepEqual(s.scenes[0].colors, []);
+});

@@ -25,12 +25,18 @@ export function applyEvent(s: ProjectState, ev: EngineEvent): ProjectState {
     };
     case 'storyboard': return {
       ...s, title: ev.title, status: 'drawing',
-      scenes: ev.scenes.map(b => ({ ...b, status: 'queued', look: NO_LOOK, edited: false, version: 1, edits: [] })),
+      scenes: ev.scenes.map(b => ({ ...b, status: 'queued', colors: [], look: NO_LOOK, edited: false, version: 1, edits: [] })),
     };
-    case 'scene.status': return scene(ev.n, sc => ({ ...sc, status: ev.status }));
+    case 'scene.status': return scene(ev.n, sc => ({ ...sc, status: ev.status, ...(ev.status === 'sketch' && { colors: [] }) }));
     case 'frame': {
       const { type: _t, ...current } = ev;
-      return { ...scene(ev.n, sc => ({ ...sc, frame: ev.src, frameKind: ev.kind })), current };
+      return {
+        ...scene(ev.n, sc => ({
+          ...sc, frame: ev.src, frameKind: ev.kind,
+          colors: ev.kind === 'color' && !sc.colors.includes(ev.src) ? [...sc.colors, ev.src] : sc.colors,
+        })),
+        current,
+      };
     }
     case 'scene.look': return scene(ev.n, sc => ({ ...sc, look: ev.look }));
     case 'scene.edited': return scene(ev.n, sc => ({ ...sc, edited: true, version: sc.version + 1, edits: [...sc.edits, ev.request] }));

@@ -1,5 +1,6 @@
 // What the demo engine plays back: six scenes cut from "Как работает лидар", a cartoon made with the same
 // painted engine Inkframe will drive in stage 2. Frames and peaks come from scripts/prepare-demo-assets.sh.
+import { asset } from '../site';
 import peaks from '../../public/demo/peaks.json' with { type: 'json' };
 
 export interface DemoScene { title: string; visual: string; line: string; frames: number }
@@ -12,8 +13,8 @@ const smooth = (xs: number[], r: number) => xs.map((_, i) => {
 });
 
 export const DEMO_CATALOG: DemoCatalog = {
-  framesDir: '/demo/frames',
-  video: '/demo/result.mp4',
+  framesDir: asset('demo/frames'),
+  video: asset('demo/result.mp4'),
   videoLabel: '1:07 · 1280×720 · голос и музыка',
   voicePeaks: peaks as number[],
   musicPeaks: smooth(peaks as number[], 12),

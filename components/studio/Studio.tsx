@@ -3,6 +3,8 @@ import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { TopBar } from '../TopBar';
 import { useProject } from '@/lib/useProject';
+import { api } from '@/lib/api';
+import { HOME_HREF, STATIC_SITE } from '@/lib/site';
 import { canBuild } from '@/lib/engine/reducer';
 import { STYLES } from '@/lib/options';
 import { WorkLog } from './WorkLog';
@@ -28,8 +30,8 @@ export function Studio({ id }: { id: string }) {
     <div className="flex h-screen flex-col"><TopBar />
       <div className="m-auto max-w-md text-center">
         <h1 className="mb-2 text-xl font-bold">Проект не найден</h1>
-        <p className="mb-5 text-mist-300">В демо-режиме проекты живут в памяти сервера и пропадают после его перезапуска.</p>
-        <Link href="/" className="rounded-xl bg-pen px-5 py-3 font-bold text-pen-ink">Начать новый</Link>
+        <p className="mb-5 text-mist-300">{STATIC_SITE ? 'На демо-сайте проекты живут, пока открыта вкладка, и пропадают при её перезагрузке.' : 'В демо-режиме проекты живут в памяти сервера и пропадают после его перезапуска.'}</p>
+        <Link href={HOME_HREF} className="rounded-xl bg-pen px-5 py-3 font-bold text-pen-ink">Начать новый</Link>
       </div>
     </div>
   );
@@ -39,8 +41,7 @@ export function Studio({ id }: { id: string }) {
   const build = async () => {
     setErr('');
     if (p.video) { setShowVideo(true); return; }
-    const r = await fetch(`/api/projects/${id}/build`, { method: 'POST' });
-    if (!r.ok) setErr((await r.json()).error);
+    try { await api.build(id); } catch (e) { setErr((e as Error).message); }
   };
   const ready = canBuild(p);
 

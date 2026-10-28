@@ -5,6 +5,8 @@ import { TopBar } from '../TopBar';
 import { DEFAULT_SETTINGS, EXAMPLES, OPTIONS, OPTION_TITLES, STYLES } from '@/lib/options';
 import type { StartSettings } from '@/lib/engine/types';
 import { RecentProjects } from './RecentProjects';
+import { api } from '@/lib/api';
+import { studioHref } from '@/lib/site';
 
 type OptionKey = keyof typeof OPTIONS;
 
@@ -19,10 +21,8 @@ export function StartScreen() {
   const start = async () => {
     setBusy(true); setErr('');
     try {
-      const r = await fetch('/api/projects', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(s) });
-      const j = await r.json();
-      if (!r.ok) throw new Error(j.error || 'Не получилось начать');
-      router.push(`/studio/${j.id}`);
+      if (!s.idea.trim()) throw new Error('Опиши идею — хотя бы одну фразу');
+      router.push(studioHref(await api.createProject(s)));
     } catch (e) { setErr((e as Error).message); setBusy(false); }
   };
 

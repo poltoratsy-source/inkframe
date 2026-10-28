@@ -1,6 +1,7 @@
 'use client';
 import { useState } from 'react';
 import type { ProjectState } from '@/lib/engine/types';
+import { api } from '@/lib/api';
 
 const QUICK = ['ночь', 'крупнее герой', 'медленнее', 'веселее', 'другой голос'];
 
@@ -12,9 +13,8 @@ export function EditPanel({ project: p, n }: { project: ProjectState; n: number 
   const send = async (request: string) => {
     if (!request.trim() || !sc) return;
     setSent('');
-    const r = await fetch(`/api/projects/${p.id}/edit`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ scene: n, request }) });
-    const j = await r.json();
-    if (r.ok) { setText(''); setSent(`Принято: «${request}»`); } else setSent(j.error);
+    try { await api.editScene(p.id, n, request); setText(''); setSent(`Принято: «${request}»`); }
+    catch (e) { setSent((e as Error).message); }
   };
   const busy = !!sc && (sc.status === 'sketch' || sc.status === 'painting');
   return (

@@ -1,16 +1,17 @@
 import type { StartSettings, StyleId } from './engine/types';
+import { asset } from './site';
 
 // What the start screen offers. `soon` options are shown but can't be picked yet.
 export interface Choice<T> { value: T; label: string; soon?: boolean }
 
 export const STYLES: { id: StyleId; title: string; text: string; thumb?: string; badge?: string; soon?: boolean }[] = [
-  { id: 'watercolor', title: 'Акварель', text: 'Рисованный мультфильм с героями, тушь и акварель', thumb: '/demo/styles/k10.jpg' },
-  { id: 'kinetic', title: 'Кинетика', text: 'Крупный текст, ритм, 3D-фоны — шоурилы и истории', thumb: '/demo/styles/st-istoriya.jpg', soon: true },
-  { id: 'reels', title: 'Reels / Shorts', text: 'Вертикальный ролик с крючком в первые 2 секунды', thumb: '/demo/styles/st-reels.jpg', badge: '9:16', soon: true },
+  { id: 'watercolor', title: 'Акварель', text: 'Рисованный мультфильм с героями, тушь и акварель', thumb: asset('demo/styles/k10.jpg') },
+  { id: 'kinetic', title: 'Кинетика', text: 'Крупный текст, ритм, 3D-фоны — шоурилы и истории', thumb: asset('demo/styles/st-istoriya.jpg'), soon: true },
+  { id: 'reels', title: 'Reels / Shorts', text: 'Вертикальный ролик с крючком в первые 2 секунды', thumb: asset('demo/styles/st-reels.jpg'), badge: '9:16', soon: true },
   { id: 'promo', title: 'Реклама продукта', text: 'Товар в 3D, слоган, упаковка крупным планом', soon: true },
-  { id: 'science', title: 'Наука', text: 'Объяснение с формулами, графиками и схемами', thumb: '/demo/styles/st-nauka.jpg', soon: true },
-  { id: 'board', title: 'На доске', text: 'Рука рисует маркером — объясняшки и уроки', thumb: '/demo/styles/st-doska.jpg', soon: true },
-  { id: 'clip', title: 'Клип', text: 'Под твою музыку, текст песни в такт', thumb: '/demo/styles/k44.jpg', soon: true },
+  { id: 'science', title: 'Наука', text: 'Объяснение с формулами, графиками и схемами', thumb: asset('demo/styles/st-nauka.jpg'), soon: true },
+  { id: 'board', title: 'На доске', text: 'Рука рисует маркером — объясняшки и уроки', thumb: asset('demo/styles/st-doska.jpg'), soon: true },
+  { id: 'clip', title: 'Клип', text: 'Под твою музыку, текст песни в такт', thumb: asset('demo/styles/k44.jpg'), soon: true },
 ];
 
 export const OPTIONS = {

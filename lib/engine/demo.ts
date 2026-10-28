@@ -1,6 +1,5 @@
 // DemoEngine: plays the scripts from demo-script.ts on timers, so the studio can be clicked through without
 // Claude or a renderer. State lives in memory; each project runs one script at a time, edits queue behind.
-import { randomUUID } from 'node:crypto';
 import { DEMO_CATALOG, type DemoCatalog } from './demo-catalog';
 import { buildAssembleScript, buildEditScript, buildRunScript } from './demo-script';
 import { applyEvent, canBuild, emptyProject } from './reducer';
@@ -17,7 +16,7 @@ export class DemoEngine implements StudioEngine {
 
   create(settings: StartSettings): ProjectState {
     if (!settings.idea?.trim()) throw new Error('The idea is empty');
-    const id = randomUUID().slice(0, 8);
+    const id = globalThis.crypto.randomUUID().slice(0, 8);   // Web Crypto: works in Node and in the browser (static demo site)
     const e: Entry = { state: emptyProject(id, settings, 'demo'), listeners: new Set(), queue: [], playing: false };
     this.projects.set(id, e);
     this.enqueue(e, () => buildRunScript(e.state, this.catalog, this.speed));

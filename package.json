@@ -5,7 +5,9 @@
   "description": "Open-source studio for hand-painted cartoons, written and drawn by Claude",
   "license": "MIT",
   "type": "module",
-  "engines": { "node": ">=20.9" },
+  "engines": {
+    "node": ">=20.9"
+  },
   "scripts": {
     "dev": "next dev -H ${HOST:-127.0.0.1} -p ${PORT:-3700}",
     "build": "next build",
@@ -13,7 +15,9 @@
     "test": "node --import tsx --test tests/*.test.ts",
     "typecheck": "tsc --noEmit",
     "demo:assets": "bash scripts/prepare-demo-assets.sh",
-    "demo:record": "node scripts/record-walkthrough.mjs"
+    "demo:record": "node scripts/record-walkthrough.mjs",
+    "build:demo": "node scripts/build-demo.mjs",
+    "preview:demo": "node scripts/serve-static.mjs out 3701"
   },
   "dependencies": {
     "next": "16.4.3",

@@ -8,3 +8,5 @@ projects/
 out/
 *.log
 .DS_Store
+.pages-build/
+out-artifact/

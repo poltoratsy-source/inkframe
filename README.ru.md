@@ -134,6 +134,13 @@ Next.js (App Router), React, TypeScript, Tailwind CSS. Сервер шлёт с�
 тем же чистым редьюсером (`lib/engine/reducer.ts`), что проверяют тесты. Настоящий движок — `lib/engine/real.ts` и
 `lib/real/` (раскадровка, Claude CLI, художник, звук, ffmpeg), рисованная сцена — `renderer/`.
 
+## Скиллы отдельно
+
+Метод, на котором рисует Inkframe, работает и без студии, как скиллы Claude Code. В папке [`skills/`](skills/) лежат два:
+**painted-animation** (рисованные мультфильмы и клипы) и **kinetic-reel** (ролики на кинетической типографике).
+Скопируй их в `~/.claude/skills/` и попроси Claude Code сделать ролик обычными словами. Что нужно поставить и чьи это
+наработки — в [skills/README.md](skills/README.md).
+
 ## Спасибо
 
 - [ClaudeAnimationBase](https://github.com/JohnHeibel/ClaudeAnimationBase) Джона Хейбела (MIT) — движок и

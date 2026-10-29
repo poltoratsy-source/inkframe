@@ -131,6 +131,13 @@ Next.js (App Router), React, TypeScript, Tailwind CSS. The server streams engine
 them with the same pure reducer (`lib/engine/reducer.ts`) the tests use. The real engine lives in `lib/engine/real.ts`
 and `lib/real/` (storyboard, Claude CLI, painter, sound, ffmpeg); the painted stage in `renderer/`.
 
+## Skills on their own
+
+The painting method behind Inkframe also works without the studio, as Claude Code skills. The repo bundles two of them in
+[`skills/`](skills/): **painted-animation** (hand-painted cartoons and lyric videos) and **kinetic-reel** (kinetic-typography
+motion reels). Copy them to `~/.claude/skills/` and ask Claude Code for a film in plain words. Requirements and credits:
+[skills/README.md](skills/README.md).
+
 ## Thanks
 
 - [ClaudeAnimationBase](https://github.com/JohnHeibel/ClaudeAnimationBase) by John Heibel (MIT): the painted

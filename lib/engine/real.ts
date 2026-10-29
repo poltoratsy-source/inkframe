@@ -5,8 +5,9 @@
 //   2. edge-tts voices every line; scene lengths stretch to fit the voice.
 //   3. Every scene is drafted on screen: a pencil sketch, then a low-res colour pass, streamed frame by frame.
 //   4. editScene() changes one scene (by Claude, by simple rules, or by new words typed in) and redraws only it.
-//   5. build() paints every scene at 1280×720 / 12 fps (scenes that didn't change come from the cache), then ffmpeg
-//      cuts them together with cross-fades, the voice over a ducked music bed and burned-in subtitles.
+//   5. build() paints every scene at 12 fps in the project's format — 1280×720, 720×1280 or 720×720 (settings.format,
+//      lib/formats.ts; scenes that didn't change come from the cache), then ffmpeg cuts them together with
+//      cross-fades, the voice over a ducked music bed and burned-in subtitles placed for that format.
 //   6. Every cut is checked before it is handed out (lib/real/review.ts → review.json): a FAIL keeps the MP4 off the
 //      screen (status back to `ready`, the log says what is wrong, scenes with broken pictures are repainted next time).
 // It emits the same events as DemoEngine, so the screens stay as they are. Projects live in INKFRAME_PROJECTS_DIR.
@@ -44,6 +45,7 @@ import { cleanScene, cleanStoryboard, editByRules, editPrompt, extractJson, revi
 import { DARK_SETTINGS, TEMPLATES, cleanSpec, describe, words, type StageScene } from '../real/scene-spec';
 import { reviewCrashed, reviewVideo, type ReviewPlan } from '../real/review';
 import { SpeedLog, estimate, type EstimateScene } from '../real/estimate';
+import { FORMATS, formatOf, sizeOf, type Format } from '../formats';
 
 /** What the engine needs from the outside world; tests swap these for fakes. */
 export interface RealTools {
@@ -72,7 +74,8 @@ export interface RealOptions {
 }
 
 const LEAD = .35, TAIL = .55;   // silence before and after each line inside its scene
-const DRAFT: FrameOptions = { rs: .25, width: 640, quality: .82 };
+const DRAFT: FrameOptions = { rs: .25, width: 640, quality: .82 };   // 16:9; other formats keep the 360 short side
+const DRAFT_SHORT = 360;
 const round1 = (x: number) => Math.round(x * 10) / 10;
 
 interface RScene { board: BoardScene; planned: number; version: number; voiceOther?: boolean; audio?: { base: string; dur: number; words: Word[] }; env: string }
@@ -336,11 +339,11 @@ export class RealEngine implements StudioEngine {
     let painted = 0;
     // no speed sample here: single frames on fresh pages measure the browser's start, not the painting
     await Promise.all(todo.map(async i => {
-      const r = e.scenes[i], n = i + 1, st = this.stage(r, { fast: true }), t = this.keyTime(r);
+      const r = e.scenes[i], n = i + 1, st = this.stage(e, r, { fast: true }), t = this.keyTime(r);
       const rel = `frames/key/s${n}-${hash(JSON.stringify([st, t])).slice(0, 10)}.jpg`;
       if (!existsSync(join(e.dir, rel))) {
         painted++;
-        await this.tools.painter.frames(st, [t], DRAFT, (_k, jpg) => { writeFileSync(join(e.dir, rel), jpg); });
+        await this.tools.painter.frames(st, [t], this.draft(e), (_k, jpg) => { writeFileSync(join(e.dir, rel), jpg); });
       }
       this.emit(e, { type: 'scene.key', n, src: `/api/projects/${e.state.id}/files/${rel}` });
       done.push(n);
@@ -585,7 +588,13 @@ export class RealEngine implements StudioEngine {
 
   // ---------- drawing ----------
   private draftTimes(dur: number) { const n = Math.max(2, Math.round(dur * this.draftFps)); return Array.from({ length: n }, (_, k) => round3(k / this.draftFps)); }
-  private stage(r: RScene, extra: Partial<StageScene> = {}): StageScene { return { ...r.board.spec, duration: r.board.duration, voice: r.env, ...extra }; }
+  private stage(e: Entry, r: RScene, extra: Partial<StageScene> = {}): StageScene { return { ...r.board.spec, duration: r.board.duration, voice: r.env, format: this.format(e), ...extra }; }
+  /** The project's frame format (settings.format; anything unknown is 16:9). */
+  private format(e: Entry): Format { return formatOf(e.state.settings.format); }
+  /** Draft and key frames: 640×360, 360×640 or 360×360. */
+  private draft(e: Entry): FrameOptions { return { ...DRAFT, width: sizeOf(this.format(e), DRAFT_SHORT).w }; }
+  /** The MP4's size: finalWidth is the 16:9 width (1280), the other formats keep its short side (720). */
+  private video(e: Entry) { return sizeOf(this.format(e), Math.round(this.finalWidth * 9 / 16)); }
 
   /** Sketch, then the colour draft, streamed to the studio. */
   private async draw(e: Entry, i: number, tick: () => void) {
@@ -595,8 +604,8 @@ export class RealEngine implements StudioEngine {
     const url = (f: string) => `/api/projects/${e.state.id}/files/${rel}/${f}`;
     this.update(e, `scene-${n}`, 'run', `Рисую сцену ${n}: набросок`, `«${r.board.title}»`);
     this.emit(e, { type: 'scene.status', n, status: 'sketch' });
-    const sk = Array.from({ length: this.sketchFrames }, (_, k) => round3((k + .5) / this.sketchFrames * dur)), clock = this.clock('draft');
-    await this.tools.painter.frames(this.stage(r, { sketch: true }), sk, DRAFT, (k, jpg) => {
+    const sk = Array.from({ length: this.sketchFrames }, (_, k) => round3((k + .5) / this.sketchFrames * dur)), clock = this.clock('draft', e);
+    await this.tools.painter.frames(this.stage(e, r, { sketch: true }), sk, this.draft(e), (k, jpg) => {
       clock.frame();
       const f = `sketch-${k}.jpg`; writeFileSync(join(dir, f), jpg); tick();
       this.emit(e, { type: 'frame', n, kind: 'sketch', src: url(f), index: Math.round(sk[k] * FINAL_FPS), total });
@@ -604,8 +613,8 @@ export class RealEngine implements StudioEngine {
     this.update(e, `scene-${n}`, 'run', `Рисую сцену ${n} в цвете`);
     this.emit(e, { type: 'scene.status', n, status: 'painting' });
     const ct = this.draftTimes(dur);
-    const clock2 = this.clock('draft');
-    await this.tools.painter.frames(this.stage(r, { fast: true }), ct, DRAFT, (k, jpg) => {
+    const clock2 = this.clock('draft', e);
+    await this.tools.painter.frames(this.stage(e, r, { fast: true }), ct, this.draft(e), (k, jpg) => {
       clock2.frame();
       const f = `color-${String(k).padStart(3, '0')}.jpg`; writeFileSync(join(dir, f), jpg); tick();
       this.emit(e, { type: 'frame', n, kind: 'color', src: url(f), index: Math.round(ct[k] * FINAL_FPS), total });
@@ -694,11 +703,12 @@ export class RealEngine implements StudioEngine {
     this.step(e, id, 'Рисую сцены начисто и склеиваю MP4', 'run', '0 %');
     try {
       mkdirSync(join(e.dir, 'clips'), { recursive: true });
-      const w = this.finalWidth, opts: FrameOptions = { rs: Number(process.env.INKFRAME_FINAL_RS) || .5, width: w, quality: .9 };
+      const fmt = this.format(e), { w, h } = this.video(e), opts: FrameOptions = { rs: Number(process.env.INKFRAME_FINAL_RS) || .5, width: w, quality: .9 };
       const jobs = e.scenes.map((r, i) => {
-        const len = r.board.duration + (i < e.scenes.length - 1 ? OVERLAP : 0), stage = this.stage(r, { fast: process.env.INKFRAME_WATERCOLOR !== '1' });
-        // the renderer's version is in the key: after a change to renderer/** every clip is painted again
-        const key = hash(JSON.stringify([stage, len, w, this.rendererVersion ??= rendererVersion()])).slice(0, 12);
+        const len = r.board.duration + (i < e.scenes.length - 1 ? OVERLAP : 0), stage = this.stage(e, r, { fast: process.env.INKFRAME_WATERCOLOR !== '1' });
+        // the renderer's version is in the key: after a change to renderer/** every clip is painted again; the format
+        // (in the stage scene too) and the size keep a 9:16 clip from ever standing in for a 16:9 one
+        const key = hash(JSON.stringify([stage, len, w, h, fmt, this.rendererVersion ??= rendererVersion()])).slice(0, 12);
         return { i, len, stage, clip: `clips/s${i + 1}-${key}.mp4`, frames: Math.round(len * FINAL_FPS) };
       });
       const todo = jobs.filter(j => !existsSync(join(e.dir, j.clip))), all = todo.reduce((a, j) => a + j.frames, 0) || 1;
@@ -710,7 +720,7 @@ export class RealEngine implements StudioEngine {
         const tmp = join(e.dir, 'tmp', `s${j.i + 1}`);
         rmSync(tmp, { recursive: true, force: true }); mkdirSync(tmp, { recursive: true });
         this.update(e, id, 'run', `Рисую начисто сцену ${j.i + 1} из ${jobs.length}`);
-        const times = Array.from({ length: j.frames }, (_, k) => round3(k / FINAL_FPS)), tp = Date.now(), clock = this.clock('final');
+        const times = Array.from({ length: j.frames }, (_, k) => round3(k / FINAL_FPS)), tp = Date.now(), clock = this.clock('final', e);
         await this.tools.painter.frames(j.stage, times, opts, (k, jpg) => {
           clock.frame();
           writeFileSync(join(tmp, `f${String(k).padStart(5, '0')}.jpg`), jpg);
@@ -731,14 +741,14 @@ export class RealEngine implements StudioEngine {
       const hasSound = clips.length > 0 || !!bed;
       if (hasSound) writeWav(join(e.dir, 'sound.wav'), mixDown(voice, bed));
       const cues = e.scenes.flatMap((r, i) => (r.audio ? cuesFor(r.board.line, r.audio.words, starts[i] + LEAD) : []));
-      if (cues.length) writeAss(join(e.dir, 'subtitles.ass'), cues);
+      if (cues.length) writeAss(join(e.dir, 'subtitles.ass'), cues, fmt);
       const out = `cut-${e.cut}.mp4`, src = `/api/projects/${e.state.id}/files/${out}`;
       await this.tools.ffmpeg(cutArgs({ clips: jobs.map(j => j.clip), starts, total, audio: hasSound ? 'sound.wav' : undefined, ass: cues.length ? 'subtitles.ass' : undefined, out }), e.dir);
       for (const f of readdirSync(e.dir)) if (/^cut-\d+\.mp4$/.test(f) && f !== out) rmSync(join(e.dir, f), { force: true });
       const used = new Set(jobs.map(j => j.clip.slice(6)));
       for (const f of readdirSync(join(e.dir, 'clips'))) if (!used.has(f)) rmSync(join(e.dir, 'clips', f), { force: true });
       rmSync(join(e.dir, 'tmp'), { recursive: true, force: true });
-      const what = `${fmtSec(total)} · ${w}×${Math.round(w * 9 / 16)} · ${[clips.length && 'голос', bed && 'музыка', cues.length && 'субтитры'].filter(Boolean).join(', ') || 'без звука'}${todo.length < jobs.length ? ` · перерисовано сцен: ${todo.length} из ${jobs.length}` : ''}`;
+      const what = `${fmtSec(total)} · ${w}×${h} · ${[clips.length && 'голос', bed && 'музыка', cues.length && 'субтитры'].filter(Boolean).join(', ') || 'без звука'}${todo.length < jobs.length ? ` · перерисовано сцен: ${todo.length} из ${jobs.length}` : ''}`;
       this.update(e, id, 'ok', 'MP4 склеен — проверяю, прежде чем отдать', what);
       this.setStage(e, 'compose', 'completed');
 
@@ -747,7 +757,7 @@ export class RealEngine implements StudioEngine {
       this.setStage(e, 'review', 'in_progress');
       this.step(e, rid, 'Проверяю готовый ролик', 'run', 'длина, чёрные и пустые кадры, голос под репликами, громкость, субтитры');
       const plan: ReviewPlan = {
-        file: join(e.dir, out), src, width: w, height: Math.round(w * 9 / 16), fps: 24, duration: total,
+        file: join(e.dir, out), src, width: w, height: h, fps: 24, duration: total,
         scenes: e.scenes.map((r, i) => ({ n: i + 1, start: starts[i], duration: r.board.duration, dark: DARK_SETTINGS.includes(r.board.spec.setting) })),
         lines: e.scenes.flatMap((r, i) => (r.board.line.trim()
           ? [{ n: i + 1, start: round3(starts[i] + LEAD), end: round3(starts[i] + (r.audio ? LEAD + r.audio.dur : r.board.duration - TAIL)), voiced: !!r.audio }] : [])),
@@ -799,13 +809,14 @@ export class RealEngine implements StudioEngine {
   // ---------- estimates and decisions ----------
   /** Times one painter call from its first frame to its last: the steady speed, without the browser's start-up and
    *  page load (they come before the first frame). One worker's s/frame = interval per frame × workers in parallel. */
-  private clock(kind: 'draft' | 'final') {
-    const start = Date.now();
+  /** Speed is kept per 16:9 frame: a frame of a cheaper format (1:1 ≈ 0.7 of the work) is counted as `cost` of one. */
+  private clock(kind: 'draft' | 'final', e: Entry) {
+    const start = Date.now(), cost = FORMATS[this.format(e)].cost;
     let first = 0, last = 0, n = 0;
     return {
       frame: () => { last = Date.now(); if (!n++) first = last; },
       done: () => {
-        if (n >= 3) this.speed.record(kind, (last - first) / 1000, n - 1, this.tools.painter.workers);
+        if (n >= 3) this.speed.record(kind, (last - first) / 1000 / cost, n - 1, this.tools.painter.workers);
         // the wait before the first frame, less the frame itself: free pages, a page at another scale, the stage loading
         if (n >= 3) this.speed.record('leadPerCall', Math.max(0, (first - start) / 1000 - (last - first) / 1000 / (n - 1) * Math.min(n, this.tools.painter.workers)), 1);
       },
@@ -813,12 +824,18 @@ export class RealEngine implements StudioEngine {
   }
 
 
+  /** This server's speed for this project's format: a 1:1 frame costs ≈ 0.7 of a 16:9 one (lib/formats.ts). */
+  private formatSpeed(e: Entry) {
+    const sp = this.speed.speed(), cost = FORMATS[this.format(e)].cost;
+    return cost === 1 ? sp : { ...sp, draft: sp.draft * cost, final: sp.final * cost };
+  }
+
   /** The estimate of the rest of the run as seen from `stage`, shown on the screen and kept in estimate.json. */
   private showEstimate(e: Entry, stage: StageId, scenes?: EstimateScene[]): Estimate {
     const s = e.state.settings, keys = stage === 'script' && this.gates.storyboard;
     const est = estimate({
       stage, draftFps: this.draftFps, sketchFrames: this.sketchFrames, finalFps: FINAL_FPS, overlap: OVERLAP,
-      workers: this.tools.painter.workers, speed: this.speed.speed(), claudeMade: e.claudeCalls, budget: this.budget,
+      workers: this.tools.painter.workers, speed: this.formatSpeed(e), claudeMade: e.claudeCalls, budget: this.budget,
       scenes: scenes ?? e.scenes.map(r => ({ duration: r.board.duration, key: keys, draft: true, final: true, voice: s.voice !== 'none' && !!r.board.line.trim() })),
     });
     try { e.store.saveEstimate(est); } catch (err) { console.warn('[inkframe] estimate.json:', (err as Error).message); }
@@ -883,8 +900,11 @@ export class RealEngine implements StudioEngine {
       reason: s.voice === 'none' ? 'без голоса — так задано' : `из настроек; голос edge-tts ${voiceId(s.language, s.voice)}`, confidence: 'high' });
     this.decide(e, { stage: 'brief', what: 'music', chosen: MUSIC_NAMES[s.music], alternatives: avail(OPTIONS.music, s.music),
       reason: s.music === 'none' ? 'без музыки — так задано' : 'из настроек; музыка синтезируется и приглушается под голос', confidence: 'high' });
-    this.decide(e, { stage: 'brief', what: 'format', chosen: `16:9 · ${this.finalWidth}×${Math.round(this.finalWidth * 9 / 16)}`, alternatives: ['9:16', '1:1'],
-      reason: s.format === '16:9' ? 'из настроек' : `в настройках ${s.format}, но этот движок пока рисует только 16:9`, confidence: s.format === '16:9' ? 'high' : 'low' });
+    const fmt = this.format(e), v = this.video(e), known = formatOf(s.format) === s.format;
+    this.decide(e, { stage: 'brief', what: 'format', chosen: `${fmt} · ${v.w}×${v.h}`, alternatives: (['16:9', '9:16', '1:1'] as Format[]).filter(f => f !== fmt),
+      reason: !known ? `в настройках «${s.format}» — такого формата нет, рисую 16:9`
+        : fmt === '9:16' ? 'из настроек; слова и герой — вне верхних 12 % и нижних 20 % кадра, где Reels / Shorts / TikTok кладут свои кнопки'
+        : fmt === '1:1' ? 'из настроек; квадрат для ленты' : 'из настроек', confidence: known ? 'high' : 'low' });
   }
 
   // ---------- resume ----------

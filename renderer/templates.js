@@ -10,8 +10,9 @@
 // window.SCENE = { template, setting, mood, prop, propColor, caption, labels, left, right, title, subtitle,
 //                  heroSize, hero, pace, duration, voice, sketch }
 // voice is the mouth envelope: one digit 0..9 per 1/24 s. sketch = true draws only pencil outlines (the draft pass).
+// Every point comes from LAYOUT (layout.js), so the same scene paints as 16:9, 9:16 or 1:1 (the page's ?fmt=).
 const SC = () => window.SCENE || {};
-const GROUND = 860;
+const LY = LAYOUT, GROUND = LY.ground;
 const voiceAt = lt => +((SC().voice || '')[Math.floor(lt * 24)] || 0);
 const paceOf = s => (s.pace === 'slow' ? .7 : s.pace === 'fast' ? 1.3 : 1);
 
@@ -53,30 +54,32 @@ const SETTINGS = {
     boilSeed('wall2'); paint(ellPts(W * .3, H * .3, W * .5, H * .35, 24, 10), { wash: '#FBF0DC', washOp: 140, ink: null });
     boilSeed('floor'); paint(rectPts(-700, GROUND - 6, W + 1400, 700, 3), { wash: '#E3B989', ink: null });
     boilSeed('floorline'); inkLine([[-700, GROUND - 4], [W / 2, GROUND - 10], [W + 700, GROUND - 2]], 1, PAL.ink, 'ink', .5);
-    boilSeed('window'); paint(rrPts(1460, 150, 300, 260, 14), { wash: '#BFE3EF', ink: PAL.ink, sw: .8 });
-    boilSeed('window-x'); inkLine([[1610, 155], [1610, 405]], .8); inkLine([[1465, 280], [1755, 280]], .8);
+    const [wx, wy, ww, wh] = LY.bg.window;
+    boilSeed('window'); paint(rrPts(wx, wy, ww, wh, 14), { wash: '#BFE3EF', ink: PAL.ink, sw: .8 });
+    boilSeed('window-x'); inkLine([[wx + ww / 2, wy + 5], [wx + ww / 2, wy + wh - 5]], .8); inkLine([[wx + 5, wy + wh / 2], [wx + ww - 5, wy + wh / 2]], .8);
   },
   sky(lt) {
     wall('#9CCBEA', 'sky');
     boilSeed('sky-hi'); paint(ellPts(W / 2, GROUND - 40, W * .9, 320, 30, 12), { wash: '#CFE6F3', washOp: 150, ink: null });
-    for (let i = 0; i < 2; i++) { const x = (hash(i * 4) * W + lt * (14 + 8 * i)) % (W + 400) - 200; boilSeed('skycl' + i); drawProp('cloud', x, 215 + i * 85, .5 - i * .12, lt, null); }
+    for (let i = 0; i < 2; i++) { const x = (hash(i * 4) * W + lt * (14 + 8 * i)) % (W + 400) - 200; boilSeed('skycl' + i); drawProp('cloud', x, LY.bg.clouds[0] + i * LY.bg.clouds[1], .5 - i * .12, lt, null); }
     hills(['#9DBF6A', '#7FAE5A'], 'hill');
   },
   meadow(lt) {
     wall('#A8D3EC', 'sky');
     hills(['#B5CF7A', '#8DB85F'], 'mhill');
-    for (let i = 0; i < 6; i++) drawProp('flower', 120 + i * 330 + 60 * hash(i), GROUND + 70 + 40 * hash(i * 3), .32, lt + i, ['pink', 'yellow', 'violet'][i % 3]);
+    const F = LY.bg.flowers;
+    for (let i = 0; i < F.n; i++) drawProp('flower', F.x0 + i * F.dx + 60 * hash(i), GROUND + 70 + 40 * hash(i * 3), .32, lt + i, ['pink', 'yellow', 'violet'][i % 3]);
   },
   sunset(lt) {
     wall('#F2B27D', 'sunset');
     boilSeed('sunset-b'); paint(rectPts(-700, -500, W + 1400, 760), { wash: '#E98C86', washOp: 170, ink: null });
-    drawProp('sun', 1500, GROUND - 120, .9, lt * .3, 'orange');
+    drawProp('sun', LY.bg.sun[0], GROUND + LY.bg.sun[1], .9, lt * .3, 'orange');
     hills(['#B07A6A', '#8C5E5A'], 'shill');
   },
   night(lt) {
     wall('#232A5C', 'night');
     starsField(lt, 14, 'nstar');
-    drawProp('moon', 1600, 190, .8, lt, null);
+    drawProp('moon', LY.bg.moon[0], LY.bg.moon[1], .8, lt, null);
     hills(['#2F3C7A', '#27306A'], 'nhill');
   },
   space(lt) {
@@ -96,7 +99,7 @@ const SETTINGS = {
   },
   board(lt) {
     SETTINGS.room(lt);
-    boilSeed('board'); paint(rrPts(260, 110, 1400, 560, 16), { wash: '#3E5E4C', fill: '#2F4A3B', fillOp: 70, ink: '#5A3E2B', sw: 1.6 });
+    boilSeed('board'); paint(rrPts(...LY.bg.board, 16), { wash: '#3E5E4C', fill: '#2F4A3B', fillOp: 70, ink: '#5A3E2B', sw: 1.6 });
   },
 };
 // with boil.holdStill the background holds its drawing (the clouds drift, but don't boil)
@@ -105,14 +108,25 @@ const DARK = new Set(['night', 'space', 'board']);
 
 // ---------- words ----------
 function fitSize(txt, max, width) { return Math.min(max, width / Math.max(1, txt.length * .42)); }
-function caption(s, lt, y = 112) {
-  const txt = (s.caption || '').trim(); if (!txt) return;
-  const size = fitSize(txt, 104, 1700);
-  letter(txt, 960, y, size, s.sketch ? '#8B8590' : '#FFF5E2', { font: `700 ${size}px Caveat`, stroke: PAL.ink, pop: lt * 2.6, rot: -.015, screen: true });
+// Words that would shrink a lot on one line break in two (when the layout allows two lines): at the space nearest the
+// middle, if that makes the letters bigger. Returns { size, rows }.
+function wrapWords(txt, max, width, lines = 1) {
+  const one = fitSize(txt, max, width);
+  if (lines < 2 || one >= max * .85 || !txt.includes(' ')) return { size: one, rows: [txt] };
+  let best = -1;
+  for (let i = txt.indexOf(' '); i >= 0; i = txt.indexOf(' ', i + 1)) if (best < 0 || Math.abs(i - txt.length / 2) < Math.abs(best - txt.length / 2)) best = i;
+  const rows = [txt.slice(0, best).trim(), txt.slice(best + 1).trim()], two = Math.min(...rows.map(r => fitSize(r, max, width)));
+  return two > one * 1.1 ? { size: two, rows } : { size: one, rows: [txt] };
 }
-function label(txt, x, y, k, s, size = 84) {
+function caption(s, lt, y = LY.caption.y) {
+  const txt = (s.caption || '').trim(); if (!txt) return;
+  const C = LY.caption, { size, rows } = wrapWords(txt, C.max, C.w, C.lines);
+  // a second line goes below the first, so the top line stays where a one-line caption is
+  rows.forEach((row, i) => letter(row, C.x, y + i * size * .92, size, s.sketch ? '#8B8590' : '#FFF5E2', { font: `700 ${size}px Caveat`, stroke: PAL.ink, pop: lt * 2.6 - i * .25, rot: -.015, screen: true }));
+}
+function label(txt, x, y, k, s, size = 84, width = 620) {
   if (!txt || k <= 0) return;
-  size = fitSize(txt, size, 620);
+  size = fitSize(txt, size, width);
   letter(txt, x, y, size, s.sketch ? '#8B8590' : '#FFF5E2', { font: `700 ${size}px Caveat`, stroke: PAL.ink, pop: k * 1.4, screen: true });
 }
 // k = 0..1 through the arrow's draw-on: the shaft settles onto the target, then the head pops open
@@ -136,7 +150,8 @@ function popIn(lt, t0, dur, preset = 'overshoot') {
 function host(lt, s, x, u, extra = {}) {
   if (s.hero === false) return;
   const p = paceOf(s), v = voiceAt(lt), mood = s.mood || 'happy';
-  const m = emotions(lt * p, [[0, mood], [Math.max(1, s.duration * .6) * p, s.mood2 || mood, { lookX: extra.lookX ?? 0 }]], { take: .6 });
+  const look = extra.lookY != null ? { lookX: extra.lookX ?? 0, lookY: extra.lookY } : { lookX: extra.lookX ?? 0 };
+  const m = emotions(lt * p, [[0, mood], [Math.max(1, s.duration * .6) * p, s.mood2 || mood, look]], { take: .6 });
   const talk = v >= 6 ? 'O' : v >= 3 ? 'o' : m.mouth;
   // the right arm: talking, waving hello until extra.wave, pointing during extra.point = [from, to]; it springs
   // between these instead of snapping
@@ -154,47 +169,50 @@ const hostU = (s, base) => (s.heroSize === 'big' ? base * 1.35 : base);
 // ---------- templates ----------
 const TEMPLATES = {
   host(t, s) {
-    const lt = t, d = s.duration, hasProp = !!PROPS[s.prop];
-    camBegin(960 + 18 * Math.sin(lt * .35), 560, kf(lt, [[0, 1.07], [d, 1.0]]));
+    const lt = t, d = s.duration, hasProp = !!PROPS[s.prop], Y = LY.host, P = s.hero === false ? Y.solo : Y.prop;
+    camBegin(LY.cam.host[0] + 18 * Math.sin(lt * .35), LY.cam.host[1], kf(lt, [[0, 1.07], [d, 1.0]]));
     setting(s.setting, lt);
     const pp = popIn(lt, .5, .75);
-    if (hasProp) drawProp(s.prop, s.hero === false ? 960 : 1330, 470, (s.hero === false ? 1.7 : 1.25) * pp.k, lt, s.propColor, pp);
+    if (hasProp) drawProp(s.prop, P.x, P.y, P.s * pp.k, lt, s.propColor, pp);
     // Clawd hops into the shot (a crouch, the hop, a small rebound), then waves or points at the prop
-    host(lt, s, hasProp ? 640 : 960, hostU(s, 26), { lookX: hasProp ? .8 : 0, point: hasProp ? [1.2, d * .7] : null,
-      wave: hasProp ? null : 1.5, hops: [[.36, .7, 1.4]] });
+    // (in 9:16 the prop floats above him, so he looks up at it)
+    host(lt, s, hasProp ? Y.hero.x : Y.hero.x0, hostU(s, Y.hero.u), { lookX: hasProp ? .8 : 0, ...(hasProp && Y.hero.lookY != null && { lookY: Y.hero.lookY }),
+      point: hasProp ? [1.2, d * .7] : null, wave: hasProp ? null : 1.5, hops: [[.36, .7, 1.4]] });
     camEnd();
     caption(s, lt);
   },
   object(t, s) {
-    const lt = t, d = s.duration, pp = popIn(lt, .2, .8);
-    camBegin(960 + 10 * Math.sin(lt * .4), 540, kf(lt, [[0, 1.0], [d, 1.05]]));
+    const lt = t, d = s.duration, pp = popIn(lt, .2, .8), Y = LY.object;
+    camBegin(LY.cam.object[0] + 10 * Math.sin(lt * .4), LY.cam.object[1], kf(lt, [[0, 1.0], [d, 1.05]]));
     setting(s.setting, lt);
-    drawProp(PROPS[s.prop] ? s.prop : 'question', 1000, 500, 1.75 * pp.k * (1 + .025 * Math.sin(lt * 2)), lt, s.propColor, pp);
+    drawProp(PROPS[s.prop] ? s.prop : 'question', Y.prop.x, Y.prop.y, Y.prop.s * pp.k * (1 + .025 * Math.sin(lt * 2)), lt, s.propColor, pp);
     // "look at this!": a little hop as he starts pointing
-    host(lt, s, 270, hostU(s, 13), { lookX: .9, point: [1, d + 1], hops: [[.95, 1.25, 1.1]] });
+    host(lt, s, Y.hero.x, hostU(s, Y.hero.u), { lookX: .9, ...(Y.hero.lookY != null && { lookY: Y.hero.lookY }), point: [1, d + 1], hops: [[.95, 1.25, 1.1]] });
     camEnd();
-    const labels = (s.labels || []).slice(0, 2), spots = [[400, 300, [770, 450]], [1580, 300, [1240, 430]]];
+    const labels = (s.labels || []).slice(0, 2);
     labels.forEach((txt, i) => {
-      const kk = seg(lt, d * (.3 + .25 * i), d * (.3 + .25 * i) + .5), [x, y, tip] = spots[i];
-      arrow([x + (i ? -60 : 60), y + 50], tip, kk, i);
-      label(txt, x, y, kk, s);
+      const kk = seg(lt, d * (.3 + .25 * i), d * (.3 + .25 * i) + .5), sp = Y.labels[i];
+      arrow(sp.a, sp.tip, kk, i);
+      label(txt, sp.x, sp.y, kk, s, 84, Y.labelW);
     });
     caption(s, lt);
   },
   compare(t, s) {
-    const lt = t, d = s.duration, L = s.left || {}, R = s.right || {};
-    camBegin(960, 540 + 6 * Math.sin(lt * .5), kf(lt, [[0, 1.04], [d, 1.0]]));
+    const lt = t, d = s.duration, L = s.left || {}, R = s.right || {}, Y = LY.compare;
+    camBegin(LY.cam.compare[0], LY.cam.compare[1] + 6 * Math.sin(lt * .5), kf(lt, [[0, 1.04], [d, 1.0]]));
     setting(s.setting, lt);
     const pL = popIn(lt, .3, .7), pR = popIn(lt, d * .4, .7);
-    for (const [P, pp, x] of [[L, pL, 520], [R, pR, 1400]]) {
-      drawProp(PROPS[P.prop] ? P.prop : 'question', x, 470, 1.3 * pp.k, lt, P.color, pp);
+    for (const [P, pp, at] of [[L, pL, Y.L], [R, pR, Y.R]]) {
+      drawProp(PROPS[P.prop] ? P.prop : 'question', at.x, at.y, at.s * pp.k, lt, P.color, pp);
     }
-    // he turns from one side to the other in a small hop, flipping at the top of it
+    // he turns from one side to the other in a small hop, flipping at the top of it; in 9:16 the sides are top and
+    // bottom, so he stands beside them and looks up, then down
     const look = kf(lt, [[0, -.9], [d * .38, -.9], [d * .46, .9], [d * .8, .9], [d * .9, 0]]);
-    host(lt, s, 960, hostU(s, 15), { lookX: look, pose: { flip: look < 0 }, hops: [[d * .42 - .15, d * .42 + .15, 1]] });
+    const eyes = Y.vertical ? { lookX: -.6, lookY: lerp(-.9, .7, (look + .9) / 1.8), pose: { flip: true } } : { lookX: look, pose: { flip: look < 0 } };
+    host(lt, s, Y.hero.x, hostU(s, Y.hero.u), { ...eyes, hops: [[d * .42 - .15, d * .42 + .15, 1]] });
     camEnd();
-    label(L.caption, 520, 680, seg(lt, .6, 1.1), s, 88);
-    label(R.caption, 1400, 680, seg(lt, d * .4 + .3, d * .4 + .8), s, 88);
+    label(L.caption, Y.L.cx, Y.L.cy, seg(lt, .6, 1.1), s, 88, Y.capW);
+    label(R.caption, Y.R.cx, Y.R.cy, seg(lt, d * .4 + .3, d * .4 + .8), s, 88, Y.capW);
     caption(s, lt);
   },
   card(t, s) {
@@ -204,23 +222,31 @@ const TEMPLATES = {
       const x = hash(i * 7.7) * W, y = ((hash(i * 3.3) * H + lt * (120 + 80 * hash(i))) % (H + 200)) - 100;
       boilSeed('conf' + i); paint(starPts(x, y, 16 + 10 * hash(i), .45, 5, lt * 2 + i), { wash: ['#F7C948', '#E27A92', '#8EC3E6', '#6E9F58'][i % 4], ink: null });
     }
-    push(); translate(960, 380); scale(k * (1 + pc.sq * .6), k * (1 - pc.sq)); translate(-960, -380);
-    boilSeed('card'); paint(rrPts(330, 150, 1260, 470, 28, 2), { wash: '#FFF5E2', fill: PAL.clayLt, fillOp: 40, ink: PAL.clayDk, sw: 1.6 });
+    const Y = LY.card, [px, py] = Y.pivot, Tt = Y.title, Sb = Y.sub;
+    push(); translate(px, py); scale(k * (1 + pc.sq * .6), k * (1 - pc.sq)); translate(-px, -py);
+    boilSeed('card'); paint(rrPts(...Y.box, 28, 2), { wash: '#FFF5E2', fill: PAL.clayLt, fillOp: 40, ink: PAL.clayDk, sw: 1.6 });
     pop();
     // cheering: hops on a 1.6 s loop, each with a crouch before and a bounce after
     const hl = lt % 1.6, hops = [[.5, .9, 1.4]].map(([a, b, h]) => [a + lt - hl, b + lt - hl, h]);
-    host(lt, s, 960, hostU(s, 18), { hops, pose: { aR: 1.3 + .3 * Math.sin(lt * 10), aL: 1.3 + .3 * Math.sin(lt * 10 + 1) } });
+    host(lt, s, Y.hero.x, hostU(s, Y.hero.u), { hops, pose: { aR: 1.3 + .3 * Math.sin(lt * 10), aL: 1.3 + .3 * Math.sin(lt * 10 + 1) } });
     const title = (s.title || s.caption || '').trim(), sub = (s.subtitle || '').trim();
-    if (title && k > .3) { const size = fitSize(title, 190, 1100); letter(title, 960, sub ? 340 : 385, size, s.sketch ? '#8B8590' : PAL.clay, { font: `700 ${size}px Caveat`, stroke: PAL.ink, pop: (lt - .4) * 2.2, rot: -.03, screen: true }); }
-    if (sub && k > .3) { const size = fitSize(sub, 72, 1100); letter(sub, 960, 500, size, s.sketch ? '#8B8590' : PAL.ink, { font: `700 ${size}px Caveat`, pop: (lt - .9) * 2.4, ink: false, screen: true }); }
+    if (title && k > .3) { const size = fitSize(title, Tt.max, Tt.w); letter(title, Tt.x, sub ? Tt.ySub : Tt.y, size, s.sketch ? '#8B8590' : PAL.clay, { font: `700 ${size}px Caveat`, stroke: PAL.ink, pop: (lt - .4) * 2.2, rot: -.03, screen: true }); }
+    if (sub && k > .3) {
+      // a long line under the title may break in two (9:16, 1:1), centred where one line would be
+      const { size, rows } = wrapWords(sub, Sb.max, Sb.w, Sb.lines);
+      rows.forEach((row, i) => letter(row, Sb.x, Sb.y + (i - (rows.length - 1) / 2) * size * .95, size, s.sketch ? '#8B8590' : PAL.ink, { font: `700 ${size}px Caveat`, pop: (lt - .9) * 2.4 - i * .2, ink: false, screen: true }));
+    }
   },
 };
 
 shots([[0, t => (TEMPLATES[SC().template] || TEMPLATES.host)(t, { duration: 4, ...SC() })]]);
 
-// Render one frame and hand it back as a JPEG data URL `w` px wide (the stage is always painted at 1920×1080 × RS).
+// Render one frame and hand it back as a JPEG data URL `w` px wide (the stage is painted at W×H × RS of its format).
+// A scene meant for another format is refused: the painter keeps one page per format and must never mix them up.
 let smallC = null;
 window.renderScaled = async (t, w = 1280, q = .9) => {
+  const want = SC().format;
+  if (want && want !== LY.id) throw new Error(`this stage paints ${LY.id}, the scene asks for ${want}`);
   T = t; await redraw(); composite(t);
   if (w >= W) return outC.toDataURL('image/jpeg', q);
   smallC ??= document.createElement('canvas');

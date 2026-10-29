@@ -97,7 +97,7 @@ export function Studio({ id }: { id: string }) {
       </div>
       <Timeline project={p} selected={selected} onPick={setPicked} />
       {showVideo && (p.video || failed) && (
-        <BuildDialog src={p.video} review={p.review} title={p.title} demo={p.engine === 'demo'} onClose={() => setShowVideo(false)}
+        <BuildDialog src={p.video} review={p.review} title={p.title} demo={p.engine === 'demo'} format={p.format} onClose={() => setShowVideo(false)}
           onRebuild={ready ? () => { setShowVideo(false); void build(); } : undefined} />
       )}
     </div>

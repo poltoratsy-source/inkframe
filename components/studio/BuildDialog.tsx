@@ -2,11 +2,12 @@
 import { useEffect, useRef } from 'react';
 import type { Review } from '@/lib/engine/types';
 import { ReviewReport } from '../board/ReviewReport';
+import { frameBox, type FrameFormat } from '../board/types';
 
 /** The finished cartoon with its self-review: play it here or download the MP4. A cut that failed the review is shown
  *  as a draft to look at (times in the report jump there), without a download, and can be built again. */
-export function BuildDialog({ src, review, title, demo, onClose, onRebuild }: {
-  src?: string; review?: Review; title: string; demo?: boolean; onClose: () => void; onRebuild?: () => void;
+export function BuildDialog({ src, review, title, demo, format, onClose, onRebuild }: {
+  src?: string; review?: Review; title: string; demo?: boolean; format?: FrameFormat; onClose: () => void; onRebuild?: () => void;
 }) {
   const file = 'inkframe-' + (title.toLowerCase().replace(/[^a-z0-9а-яё]+/gi, '-').slice(0, 40) || 'cartoon') + '.mp4';
   const failed = review?.decision === 'FAIL', video = src ?? review?.video, player = useRef<HTMLVideoElement>(null);
@@ -28,7 +29,8 @@ export function BuildDialog({ src, review, title, demo, onClose, onRebuild }: {
         </div>
         <div className={review ? 'grid gap-4 lg:grid-cols-[minmax(0,1fr)_360px]' : ''}>
           <div className="min-w-0">
-            {video && <video ref={player} src={video} controls autoPlay={!failed} className="aspect-video w-full rounded-lg bg-black" />}
+            {/* a vertical or square MP4 keeps its proportions: the box has its aspect, capped to the window's height */}
+            {video && <video ref={player} src={video} controls autoPlay={!failed} className="max-h-[72vh] w-full rounded-lg bg-black" style={frameBox(format)} />}
             <div className="mt-3 flex flex-wrap items-center gap-3">
               {failed ? (
                 <>

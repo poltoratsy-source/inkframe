@@ -43,7 +43,11 @@ export const LIMITS = {
   clipDb: -.1,
   /** the part of the frame black and blank look at: the top 80 %, above the subtitle box */
   picture: .8,
+  /** a vertical frame's subtitles sit higher (above the apps' bottom 20 %, from ~71 % down): the top 70 % */
+  pictureTall: .7,
 };
+/** The share of the frame (from the top) that black and blank look at, for a frame of this size. */
+export const pictureShare = (width: number, height: number) => (height > width ? LIMITS.pictureTall : LIMITS.picture);
 
 // ---------- running ffmpeg / ffprobe ----------
 interface Ran { code: number; out: Buffer; err: string }
@@ -94,8 +98,8 @@ async function probeByFfmpeg(file: string): Promise<Probe | undefined> {
 
 // ---------- one pass over the whole file: black runs, silences, loudness ----------
 export interface Scan { black: [number, number][]; silence: [number, number][]; maxDb?: number }
-export async function scan(file: string, duration: number, audio: boolean): Promise<Scan> {
-  const crop = `crop=iw:trunc(ih*${LIMITS.picture}/2)*2:0:0`;
+export async function scan(file: string, duration: number, audio: boolean, share = LIMITS.picture): Promise<Scan> {
+  const crop = `crop=iw:trunc(ih*${share}/2)*2:0:0`;
   const args = ['-hide_banner', '-nostats', '-i', file,
     '-map', '0:v:0', '-vf', `${crop},blackdetect=d=${LIMITS.blackSec}:pic_th=${LIMITS.blackPicture}:pix_th=${LIMITS.blackPixel}`,
     ...(audio ? ['-map', '0:a:0', '-af', `silencedetect=noise=${LIMITS.silenceDb}dB:d=${LIMITS.silenceSec},volumedetect`] : []),
@@ -115,9 +119,9 @@ export async function scan(file: string, duration: number, audio: boolean): Prom
 }
 
 /** The spread of brightness (standard deviation of luma, 0–255) of the frame at `t`, top part only. */
-export async function frameSpread(file: string, t: number): Promise<number | undefined> {
+export async function frameSpread(file: string, t: number, share = LIMITS.picture): Promise<number | undefined> {
   const { code, out } = await run('ffmpeg', ['-v', 'error', '-ss', t.toFixed(3), '-i', file, '-frames:v', '1',
-    '-vf', `crop=iw:trunc(ih*${LIMITS.picture}/2)*2:0:0,scale=160:72,format=gray`, '-f', 'rawvideo', '-']);
+    '-vf', `crop=iw:trunc(ih*${share}/2)*2:0:0,scale=160:72,format=gray`, '-f', 'rawvideo', '-']);
   if (code || !out.length) return undefined;
   let sum = 0, sq = 0;
   for (const v of out) { sum += v; sq += v * v; }
@@ -199,7 +203,8 @@ export async function reviewVideo(plan: ReviewPlan): Promise<Review> {
   }
 
   let s: Scan;
-  try { s = await scan(plan.file, p.duration, p.audio); }
+  const share = pictureShare(plan.width, plan.height);
+  try { s = await scan(plan.file, p.duration, p.audio, share); }
   catch (err) {
     checks.push({ id: 'black', ok: false, detail: `ролик не читается до конца: ${(err as Error).message.slice(0, 120)}` });
     return done();
@@ -212,7 +217,7 @@ export async function reviewVideo(plan: ReviewPlan): Promise<Review> {
       const inDark = plan.scenes.filter(sc => sc.dark).reduce((a, sc) => a + overlap(run, sc.start, sc.start + sc.duration), 0);
       if (inDark >= (run[1] - run[0]) * .8) {
         // a dark scene on purpose: fine while there is still a drawing in it (stars, the hero, chalk); a flat black is not
-        const spread = await frameSpread(plan.file, (run[0] + run[1]) / 2);
+        const spread = await frameSpread(plan.file, (run[0] + run[1]) / 2, share);
         if (spread !== undefined && spread >= LIMITS.flatStd) { meant.push(sceneAt(run[0])); continue; }
       }
       faults.push(run);
@@ -228,7 +233,7 @@ export async function reviewVideo(plan: ReviewPlan): Promise<Review> {
     const times = LIMITS.samples.map(k => r1(Math.min(p!.duration - .1, k * p!.duration))), flat: number[] = [];
     let seen = 0;
     for (const t of times) {
-      const spread = await frameSpread(plan.file, t);
+      const spread = await frameSpread(plan.file, t, share);
       if (spread === undefined) continue;
       seen++;
       if (spread < LIMITS.flatStd) flat.push(t);

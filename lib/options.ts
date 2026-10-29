@@ -19,7 +19,7 @@ export const OPTIONS = {
     { value: 15, label: '15 с' }, { value: 30, label: '30 с' }, { value: 60, label: '60 с' }, { value: 120, label: '2 мин' },
   ] as Choice<number>[],
   format: [
-    { value: '16:9', label: '16:9' }, { value: '9:16', label: '9:16', soon: true }, { value: '1:1', label: '1:1', soon: true },
+    { value: '16:9', label: '16:9' }, { value: '9:16', label: '9:16' }, { value: '1:1', label: '1:1' },
   ] as Choice<StartSettings['format']>[],
   voice: [
     { value: 'svetlana', label: 'Светлана' }, { value: 'dmitry', label: 'Дмитрий' },

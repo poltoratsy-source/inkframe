@@ -26,7 +26,7 @@ export function summarize(s: ProjectState): ProjectSummary {
   return {
     id: s.id, title: s.title, status: s.status, duration: s.settings.duration, style: s.settings.style, createdAt: s.createdAt,
     thumb: s.scenes.find(sc => sc.frameKind === 'color')?.frame ?? s.scenes.find(sc => sc.key)?.key ?? s.scenes[0]?.frame,
-    stage, stageStatus: s.stages[stage].status, badge: badgeOf(s), scenes: s.scenes.length,
+    stage, stageStatus: s.stages[stage].status, badge: badgeOf(s), scenes: s.scenes.length, format: s.format ?? '16:9',
     ...(s.gate && { awaiting: s.gate.stage }),
   };
 }

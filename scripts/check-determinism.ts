@@ -1,6 +1,6 @@
 // Determinism check for the painted engine: a frame must be a pure function of t. Paints the same frames in two
 // separate pages, in different orders (page B starts with other scenes and goes backwards), and compares the pixels.
-//   node --import tsx scripts/check-determinism.ts [rs=.25] [--watercolor]
+//   node --import tsx scripts/check-determinism.ts [rs=.25] [--watercolor] [--format=9:16|1:1]
 // Exit code 1 if any frame differs beyond the tolerance. Needs Chrome (the same one the painter uses); ~2 min here.
 // Tolerance: with SwiftShader (CPU WebGL) a repeat render of the very same t, even in the same page, can differ in a
 // few dozen to a few thousand channel values by at most ~16/255 (measured 29.10.2026, the pre-M2 renderer too); a real
@@ -10,8 +10,10 @@ import { pathToFileURL } from 'node:url';
 import puppeteer, { type Page } from 'puppeteer-core';
 import { findChrome } from '../lib/real/painter.ts';
 import type { StageScene } from '../lib/real/scene-spec.ts';
+import { FORMATS, formatOf } from '../lib/formats.ts';
 
 const args = process.argv.slice(2), rs = +(args.find(a => !a.startsWith('--')) || .25), watercolor = args.includes('--watercolor');
+const format = formatOf(args.find(a => a.startsWith('--format='))?.slice(9) ?? '16:9');
 const voice = '0000000033667755443300000000336677554433000000003366775544330000'.repeat(4);
 const base: StageScene[] = [
   { template: 'host', setting: 'sky', mood: 'happy', prop: 'sun', caption: 'Почему небо голубое?', duration: 5, voice },
@@ -22,7 +24,7 @@ const base: StageScene[] = [
   // the boil options: ink-only boil at 9 fps with still props holding
   { template: 'host', setting: 'meadow', mood: 'happy', prop: 'tree', caption: 'Тушь', duration: 4, voice, boil: { fps: 9, amp: 1.6, inkOnly: true, holdStill: true } },
 ];
-const scenes = base.map(s => ({ ...s, fast: !watercolor }));
+const scenes = base.map(s => ({ ...s, fast: !watercolor, ...(format !== '16:9' && { format }) }));
 const times = [.12, .45, .62, 1.05, 2.37, 3.3];
 
 const browser = await puppeteer.launch({
@@ -30,7 +32,7 @@ const browser = await puppeteer.launch({
   args: ['--no-sandbox', '--allow-file-access-from-files', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--window-size=1920,1080',
     '--disable-renderer-backgrounding', '--disable-background-timer-throttling', '--disable-backgrounding-occluded-windows'],
 });
-const url = `${pathToFileURL(resolve('renderer/stage.html')).href}?render&rs=${rs}`;
+const url = `${pathToFileURL(resolve('renderer/stage.html')).href}?render&rs=${rs}&fmt=${FORMATS[format].query}`;
 const open = async () => { const p = await browser.newPage(); p.on('pageerror', e => console.error('[stage]', (e as Error).message)); await p.goto(url); await p.waitForFunction('window.ready === true', { timeout: 60000 }); return p; };
 // Paints a frame and returns a hash of its pixels (FNV-1a over the RGBA bytes); raw = true returns the bytes (base64).
 // The page code is a string, so the TS loader's helpers (__name) never end up in the page.
@@ -59,6 +61,6 @@ for (const [k, h] of a) {
   bad++; console.log(`DIFF ${scenes[i].template} #${k}: ${n} channel values differ, max ${m}`);
 }
 await browser.close();
-console.log(`${a.size} frames × 2 pages (${watercolor ? 'watercolour' : 'fast colour'}, rs ${rs}) in ${((Date.now() - t0) / 1000).toFixed(0)} s: ` +
+console.log(`${a.size} frames × 2 pages (${format}, ${watercolor ? 'watercolour' : 'fast colour'}, rs ${rs}) in ${((Date.now() - t0) / 1000).toFixed(0)} s: ` +
   `${exact} identical, ${near} within the tolerance (worst ${(worst * 100).toFixed(3)} % of values), ${bad} differ`);
 process.exit(bad ? 1 : 0);

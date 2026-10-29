@@ -1,8 +1,11 @@
 // core.js: constants, helpers, paper, paint wrapper, compositing and render hooks.
 // From ClaudeAnimationBase (MIT, github.com/JohnHeibel/ClaudeAnimationBase), with an internal render scale (RS) added.
 // Length and rhythm come from PROJECT in config.js.
-const QS = new URLSearchParams(location.search), TALL = QS.has('tall');   // ?tall = 1080×1920 (vertical), ?rs=1 = full internal resolution
-const W = TALL ? 1080 : 1920, H = TALL ? 1920 : 1080;
+// ?fmt = the frame format: 16x9 (1920×1080, the default), 9x16 (1080×1920), 1x1 (1080×1080); ?tall = 9x16 (older
+// name); ?rs=1 = full internal resolution. Where things go in each format: layout.js.
+const QS = new URLSearchParams(location.search), TALL = QS.has('tall');
+const FMT_Q = ({ '16x9': '16x9', '9x16': '9x16', '1x1': '1x1' })[QS.get('fmt')] || (TALL ? '9x16' : '16x9');
+const W = FMT_Q === '16x9' ? 1920 : 1080, H = FMT_Q === '9x16' ? 1920 : 1080;
 const RS = +(QS.get('rs') || PROJECT.renderScale || 1);   // internal render scale (composited back up to W×H)
 const BPM = PROJECT.bpm, BEAT = 60 / BPM, OFF = PROJECT.offset || 0, BOIL = 12, DUR = PROJECT.duration;
 const TAU = Math.PI * 2;

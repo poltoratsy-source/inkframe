@@ -79,6 +79,9 @@ export interface ProjectState {
   stages: StageMap;
   /** the gate waiting for a decision, if any */
   gate?: OpenGate;
+  /** the format the frames and the MP4 are painted in (9:16 and 1:1 since M6); none = 16:9 (projects before M6, the
+   *  demo, whose ready-made frames are horizontal whatever the settings ask) */
+  format?: '16:9' | '9:16' | '1:1';
   /** the self-review of the newest cut; a FAIL comes without `video` */
   review?: Review;
   /** what the work after the open gate will cost; after the work, with the fact (actualSec) */
@@ -87,6 +90,8 @@ export interface ProjectState {
 
 export interface ProjectSummary {
   id: string; title: string; status: ProjectStatus; duration: number; style: StyleId; thumb?: string; createdAt: string;
+  /** the format of its frames (the cover is shown in its own proportions) */
+  format?: '16:9' | '9:16' | '1:1';
   /** the stage the project is at (the live one, or the last one done) and its status */
   stage: StageId; stageStatus: StageStatus;
   /** the stage whose gate waits for a human */

@@ -14,7 +14,7 @@ export function cardOf(sc: Scene, p: ProjectState): SceneCardView {
   return {
     n: sc.n, title: sc.title, line: sc.line, start: sc.start, duration: sc.duration,
     template: TEMPLATE_NAMES[sc.template ?? ''] ?? sc.template ?? '', frame: sc.frame ?? sc.key,
-    status: atGate ? 'awaiting' : sc.status, edits: sc.edits.length, version: sc.version,
+    status: atGate ? 'awaiting' : sc.status, edits: sc.edits.length, version: sc.version, format: p.format ?? '16:9',
   };
 }
 
@@ -27,5 +27,5 @@ export function libraryCardOf(s: ProjectSummary): LibraryCardView {
     : s.badge === 'done' ? 'готово'
     : s.badge === 'error' ? `${stage}: ошибка`
     : `черновик · ${stage.toLowerCase()}`;
-  return { id: s.id, title: s.title || 'Без названия', href: studioHref(s.id), badge: s.badge, thumb: s.thumb, length: mmss(s.duration), style: styleName(s.style), stage: s.stage, stageText };
+  return { id: s.id, title: s.title || 'Без названия', href: studioHref(s.id), badge: s.badge, thumb: s.thumb, length: mmss(s.duration), style: styleName(s.style), stage: s.stage, stageText, format: s.format ?? '16:9' };
 }

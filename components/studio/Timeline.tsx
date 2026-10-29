@@ -1,5 +1,6 @@
 'use client';
 import type { ProjectState } from '@/lib/engine/types';
+import { fitIn169 } from '../board/types';
 
 const mmss = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
 const STATUS = { queued: 'в очереди', sketch: 'набросок', painting: 'рисую', done: 'готово' } as const;
@@ -32,7 +33,7 @@ export function Timeline({ project: p, selected, onPick }: { project: ProjectSta
             <button key={sc.n} type="button" onClick={() => onPick(sc.n)} aria-label={`Сцена ${sc.n}: ${word}${more ? `, ${more}` : ''}`}
               className={`relative min-w-0 flex-1 overflow-hidden rounded-[9px] border-2 bg-ink-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-pen ${sc.n === selected ? 'border-pen' : img ? 'border-transparent' : 'border-dashed border-ink-500'}`}>
               {img
-                ? <img key={img} src={img} alt="" className={`fade-in size-full object-cover ${sc.status === 'sketch' ? 'sketchy' : ''} ${sc.status === 'queued' ? 'opacity-45' : ''}`}
+                ? <img key={img} src={img} alt="" className={`fade-in size-full ${fitIn169(p.format)} ${sc.status === 'sketch' ? 'sketchy' : ''} ${sc.status === 'queued' ? 'opacity-45' : ''}`}
                   style={{ filter: sc.frameKind === 'color' && sc.status !== 'sketch' ? sc.look.filter : undefined, transform: `scale(${sc.look.zoom})` }} />
                 : <span className="text-mist-500">{sc.n} · в очереди</span>}
               {sc.status === 'painting' && img && <div key={img + '-pen'} className="pen" style={{ ['--pen-ms' as string]: '600ms' }} />}

@@ -3,6 +3,7 @@
 import { spawn } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
 import type { Word } from './audio';
+import { FORMATS, sizeOf, type Format } from '../formats';
 
 export const FINAL_FPS = 12;     // painted on twos, like the hand-drawn engine it comes from
 export const OVERLAP = .4;       // seconds of cross-fade between scenes
@@ -50,17 +51,20 @@ export function cuesFor(line: string, words: Word[], at: number, max = 40): Cue[
 
 const assTime = (s: number) => { s = Math.max(0, s); return `${Math.floor(s / 3600)}:${String(Math.floor(s % 3600 / 60)).padStart(2, '0')}:${(s % 60).toFixed(2).padStart(5, '0')}`; };
 
-export function writeAss(file: string, cues: Cue[]) {
+/** The subtitles of one cut. PlayRes is the MP4's own size at the 720 short side; font size and margins come from the
+ *  format (lib/formats.ts): in 9:16 the cue sits above the bottom 20 % the apps cover, over the floor under Clawd. */
+export function writeAss(file: string, cues: Cue[], format: Format = '16:9') {
+  const { w, h } = sizeOf(format, 720), sb = FORMATS[format].subs;
   const head = `[Script Info]
 ScriptType: v4.00+
-PlayResX: 1280
-PlayResY: 720
+PlayResX: ${w}
+PlayResY: ${h}
 WrapStyle: 0
 ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Sub,Inter,40,&H00FFFFFF,&H00FFFFFF,&H60140F0E,&H60140F0E,1,0,0,0,100,100,0,0,4,10,0,2,90,90,30,204
+Style: Sub,Inter,${sb.size},&H00FFFFFF,&H00FFFFFF,&H60140F0E,&H60140F0E,1,0,0,0,100,100,0,0,4,10,0,2,${sb.marginLR},${sb.marginLR},${sb.marginV},204
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text

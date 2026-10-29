@@ -32,11 +32,11 @@ export function StoryboardGate({ project: p }: { project: ProjectState }) {
       onRevise={async (v, note) => { if (await send('revise', v, note, { scenes })) setMarks({}); }}>
       <div className="flex flex-col gap-1.5">
         <div className="text-[12px] text-mist-400">{open ? 'Нажмите на кадр, чтобы отметить сцену «перерисовать» и написать, что в ней поменять.' : ' '}</div>
-        <ul aria-label="Раскадровка: ключевые кадры сцен" className="grid grid-cols-3 gap-2.5 max-lg:grid-cols-2 max-sm:grid-cols-1">
+        <ul aria-label="Раскадровка: ключевые кадры сцен" className={`grid gap-2.5 ${p.format === '9:16' ? 'grid-cols-5 max-lg:grid-cols-3 max-sm:grid-cols-2' : p.format === '1:1' ? 'grid-cols-4 max-lg:grid-cols-3 max-sm:grid-cols-2' : 'grid-cols-3 max-lg:grid-cols-2 max-sm:grid-cols-1'}`}>
           {p.scenes.map(sc => (
             <li key={sc.n} className="flex flex-col gap-1.5">
               <SceneCard picked={sc.n in marks} onPick={() => toggle(sc.n)}
-                s={{ n: sc.n, title: sc.title, line: sc.line, start: sc.start, duration: sc.duration, template: TEMPLATE_NAMES[sc.template ?? ''] ?? sc.template ?? '', frame: sc.key, status: status(sc.n, sc.key), edits: sc.edits.length, note: marks[sc.n] || undefined }} />
+                s={{ n: sc.n, title: sc.title, line: sc.line, start: sc.start, duration: sc.duration, template: TEMPLATE_NAMES[sc.template ?? ''] ?? sc.template ?? '', frame: sc.key, status: status(sc.n, sc.key), edits: sc.edits.length, note: marks[sc.n] || undefined, format: p.format }} />
               {sc.n in marks && (
                 <input autoFocus value={marks[sc.n]} maxLength={300} onChange={e => setMarks(m => ({ ...m, [sc.n]: e.target.value }))}
                   aria-label={`Что поменять в сцене ${sc.n}`} placeholder={`Сцена ${sc.n}: что поменять?`}

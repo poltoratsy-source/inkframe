@@ -3,6 +3,7 @@ import { useRef, useState } from 'react';
 import { GatePanel } from '../board/GatePanel';
 import { ReviewReport } from '../board/ReviewReport';
 import { useGate } from './useGate';
+import { frameBox } from '../board/types';
 import type { ProjectState } from '@/lib/engine/types';
 
 /** The final gate: the checked MP4 with its self-review. «Утвердить» hands it out; «Вернуть с замечанием» redoes
@@ -31,7 +32,7 @@ export function FinalGate({ project: p }: { project: ProjectState }) {
         </label>
       }>
       <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_320px]">
-        {video && <video ref={player} src={video} controls className="aspect-video w-full rounded-lg bg-black" aria-label="Собранный ролик" />}
+        {video && <video ref={player} src={video} controls className="max-h-[70vh] w-full rounded-lg bg-black" style={frameBox(p.format)} aria-label="Собранный ролик" />}
         {p.review && <ReviewReport r={p.review} onSeek={seek} />}
       </div>
     </GatePanel>

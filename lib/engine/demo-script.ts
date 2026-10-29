@@ -95,6 +95,9 @@ export function buildWriteScript(p: ProjectState, c: DemoCatalog, speed = 1, o: 
     d('style', 'Акварель', 'задан на стартовом экране');
     d('voice', VOICE_NAMES[s.voice], 'из настроек');
     d('music', MUSIC_NAMES[s.music], 'из настроек');
+    // the demo's frames are a ready-made horizontal cartoon: a vertical or square choice is said honestly, not faked
+    if (s.format !== '16:9') w.emit({ type: 'decision', decision: { at: new Date().toISOString(), stage: 'brief', what: 'format', chosen: '16:9 (демо)',
+      alternatives: [s.format], reason: `в настройках ${s.format}, но демо-ролик нарисован заранее горизонтально; ${s.format} рисует настоящий движок`, confidence: 'low' } });
     for (const b of board) w.emit({ type: 'decision', decision: {
       at: new Date().toISOString(), stage: 'script', what: 'template', scene: b.n, chosen: b.template ?? 'host', confidence: 'medium',
       alternatives: ['host', 'object', 'compare', 'card'].filter(t => t !== b.template), reason: 'демо: кадры взяты из готового мультфильма «Как работает лидар»',

@@ -4,11 +4,12 @@
 <meta charset="utf-8">
 <title>Inkframe stage</title>
 <!-- One painted scene, drawn from window.SCENE (see lib/real/scene-spec.ts). The renderer (lib/real/painter.ts) sets
-     SCENE before every frame and calls window.renderScaled(t, width, quality). Nothing here touches the network. -->
+     SCENE before every frame and calls window.renderScaled(t, width, quality). Nothing here touches the network.
+     ?fmt=16x9 | 9x16 | 1x1 picks the frame format (layout.js); a page paints one format, the painter keeps a page per format. -->
 <style>
   @font-face { font-family: 'Caveat'; src: url('fonts/Caveat.ttf') format('truetype'); font-weight: 400 700; }
   html, body { margin: 0; background: #1b1820; }
-  #out { width: 960px; height: 540px; }
+  #out { width: auto; height: 540px; }   /* any format keeps its proportions when opened by hand */
   .p5Canvas { display: none !important; }
 </style>
 <script>
@@ -28,6 +29,7 @@
 <script src="engine/clawd.js"></script>
 <script src="engine/timeline.js"></script>
 <script src="props.js"></script>
+<script src="layout.js"></script>
 <script src="templates.js"></script>
 </body>
 </html>

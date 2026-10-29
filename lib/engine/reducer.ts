@@ -2,6 +2,7 @@
 import type { EngineEvent, ProjectState, StartSettings } from './types';
 import { STAGE_IDS, defaultStages, type StageMap } from '../store/types';
 import { describeDecision } from '../store/decisions';
+import { formatOf } from '../formats';
 
 export const NO_LOOK = { filter: 'none', zoom: 1 };
 
@@ -11,6 +12,8 @@ export function emptyProject(id: string, settings: StartSettings, engine: 'demo'
     id, engine, createdAt, settings,
     title: idea.length > 60 ? idea.slice(0, 57) + '…' : idea,
     status: 'drafting', scenes: [], log: [], progress: 0, etaSec: 0, tracks: {}, stages: defaultStages(),
+    // the real engine paints the format asked for; the demo has 16:9 frames only and says so
+    format: engine === 'real' ? formatOf(settings.format) : '16:9',
   };
 }
 

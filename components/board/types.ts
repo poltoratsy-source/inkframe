@@ -11,10 +11,18 @@ export const STAGE_TITLES: Record<StageId, string> = {
 };
 
 export type CardStatus = 'queued' | 'sketch' | 'painting' | 'done' | 'awaiting' | 'redraw';
+/** The frame format: a card or a cover keeps its frame's proportions (16:9 by default). */
+export type FrameFormat = '16:9' | '9:16' | '1:1';
+/** The CSS of a box for a frame of this format: its aspect ratio. */
+export const frameBox = (f: FrameFormat = '16:9') => ({ aspectRatio: f.replace(':', ' / ') });
+/** How a frame of `f` fills a box made for 16:9 (the stage, the timeline, the library covers): whole, never stretched. */
+export const fitIn169 = (f: FrameFormat = '16:9') => (f === '16:9' ? 'object-cover' : 'object-contain');
 export interface SceneCardView {
   n: number; title: string; line: string; start: number; duration: number; template: string; frame?: string; status: CardStatus; edits: number; note?: string;
   /** the scene's version: +1 with every redraw (v1 is not shown) */
   version?: number;
+  /** the frame's format (16:9 when not given) */
+  format?: FrameFormat;
 }
 
 export interface EstimateView {

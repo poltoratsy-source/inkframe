@@ -45,7 +45,8 @@ export interface SceneSpec {
 export interface BoilParams { fps?: number; amp?: number; inkOnly?: boolean; holdStill?: boolean }
 
 /** What the stage page gets for one frame (renderer/templates.js reads window.SCENE). */
-export interface StageScene extends SceneSpec { duration: number; voice: string; sketch?: boolean; fast?: boolean; boil?: BoilParams }
+/** `format`: the frame format (renderer/layout.js); the painter paints it on a page opened for that format. */
+export interface StageScene extends SceneSpec { duration: number; voice: string; sketch?: boolean; fast?: boolean; boil?: BoilParams; format?: '16:9' | '9:16' | '1:1' }
 
 const pick = <T extends string>(list: readonly T[], v: unknown, d?: T): T | undefined =>
   (typeof v === 'string' && (list as readonly string[]).includes(v.trim().toLowerCase()) ? v.trim().toLowerCase() as T : d);

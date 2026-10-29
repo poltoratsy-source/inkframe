@@ -1,4 +1,4 @@
-import { mmss, type SceneCardView } from './types';
+import { frameBox, mmss, type SceneCardView } from './types';
 
 const SAY: Record<SceneCardView['status'], string> = {
   queued: 'в очереди', sketch: 'набросок', painting: 'рисую', done: 'готово', awaiting: 'ждёт вас', redraw: 'перерисовать',
@@ -10,7 +10,7 @@ export function SceneCard({ s, picked, onPick }: { s: SceneCardView; picked?: bo
   return (
     <button type="button" onClick={onPick} aria-pressed={onPick ? !!picked : undefined}
       className={`flex w-full flex-col gap-2 rounded-[10px] border-2 ${ring} bg-ink-700 p-2 text-left hover:bg-ink-650 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-pen`}>
-      <div className="relative aspect-video overflow-hidden rounded-md bg-ink-950">
+      <div className="relative overflow-hidden rounded-md bg-ink-950" style={frameBox(s.format)}>
         {s.frame
           ? <img src={s.frame} alt={s.title} className={`fade-in size-full object-cover ${s.status === 'sketch' ? 'sketchy' : ''}`} />
           : <div className="flex size-full items-center justify-center text-[12px] text-mist-500">кадр появится здесь</div>}

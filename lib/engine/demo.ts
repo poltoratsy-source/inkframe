@@ -3,7 +3,7 @@
 import { DEMO_CATALOG, type DemoCatalog } from './demo-catalog';
 import { buildAssembleScript, buildEditScript, buildRunScript } from './demo-script';
 import { applyEvent, canBuild, emptyProject } from './reducer';
-import type { EngineEvent, ProjectState, ProjectSummary, StartSettings, StudioEngine, TimedEvent } from './types';
+import type { EngineEvent, ProjectState, ProjectSummary, ScenePatch, StartSettings, StudioEngine, TimedEvent } from './types';
 
 interface Entry { state: ProjectState; listeners: Set<(ev: EngineEvent) => void>; queue: (() => TimedEvent[])[]; playing: boolean }
 
@@ -39,8 +39,14 @@ export class DemoEngine implements StudioEngine {
     return () => { e.listeners.delete(listener); };
   }
 
-  editScene(id: string, n: number, request: string) {
+  editScene(id: string, n: number, request: string, patch?: ScenePatch) {
     const e = this.entry(id);
+    // new words typed into the edit panel: the demo shows them and redraws the scene like any other edit
+    if (patch?.line?.trim() || patch?.caption?.trim()) {
+      if (patch.line?.trim()) this.emit(e, { type: 'scene.board', n, patch: { line: patch.line.trim().slice(0, 220) } });
+      if (patch.caption !== undefined) this.emit(e, { type: 'scene.board', n, patch: { caption: patch.caption.trim().slice(0, 42) } });
+      request = request.trim() || (patch.line?.trim() ? 'новая реплика' : 'новая подпись');
+    }
     if (!request.trim()) throw new Error('The edit request is empty');
     if (e.state.scenes.length && !e.state.scenes.some(sc => sc.n === n)) throw new Error(`No scene ${n} in this project`);
     if (!e.state.scenes.length && n > 6) throw new Error(`No scene ${n} in this project`);

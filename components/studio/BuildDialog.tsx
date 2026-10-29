@@ -1,7 +1,7 @@
 'use client';
 
 /** The finished cartoon: play it here or download the MP4. */
-export function BuildDialog({ src, title, onClose }: { src: string; title: string; onClose: () => void }) {
+export function BuildDialog({ src, title, demo, onClose }: { src: string; title: string; demo?: boolean; onClose: () => void }) {
   const file = 'inkframe-' + (title.toLowerCase().replace(/[^a-z0-9а-яё]+/gi, '-').slice(0, 40) || 'cartoon') + '.mp4';
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70" onClick={onClose}>
@@ -15,7 +15,7 @@ export function BuildDialog({ src, title, onClose }: { src: string; title: strin
         <video src={src} controls autoPlay className="aspect-video w-full rounded-lg bg-black" />
         <div className="mt-3 flex items-center gap-3">
           <a href={src} download={file} className="rounded-lg bg-pen px-4 py-2 font-bold text-pen-ink">⬇ Скачать MP4</a>
-          <span className="text-[12.5px] text-mist-400">Демо-режим: показан готовый мультфильм «Как работает лидар», нарисованный тем же движком.</span>
+          {demo && <span className="text-[12.5px] text-mist-400">Демо-режим: показан готовый мультфильм «Как работает лидар», нарисованный тем же движком.</span>}
         </div>
       </div>
     </div>

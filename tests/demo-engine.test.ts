@@ -1,7 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { DemoEngine } from '../lib/engine/demo.ts';
-import { RealEngine } from '../lib/engine/real.ts';
 import { DEFAULT_SETTINGS } from '../lib/options.ts';
 import type { EngineEvent } from '../lib/engine/types.ts';
 
@@ -56,8 +55,12 @@ test('empty idea is refused', () => {
   assert.throws(() => new DemoEngine().create({ ...settings, idea: '  ' }), /idea/);
 });
 
-test('the real engine is a clear stage-2 stub', () => {
-  const r = new RealEngine();
-  assert.equal(r.mode, 'real');
-  assert.throws(() => r.create(settings), /stage 2/);
+test('new words from the edit panel show at once and redraw the scene', async () => {
+  const e = new DemoEngine({ speed: 1000 });
+  const p = e.create(settings);
+  await until(e, p.id, ev => ev.type === 'status' && ev.status === 'ready');
+  e.editScene(p.id, 1, '', { line: 'Новая реплика' });
+  assert.equal(e.get(p.id)!.scenes[0].line, 'Новая реплика');
+  await until(e, p.id, ev => ev.type === 'scene.edited');
+  assert.equal(e.get(p.id)!.scenes[0].edited, true);
 });

@@ -30,7 +30,7 @@ export function Studio({ id }: { id: string }) {
     <div className="flex h-screen flex-col"><TopBar />
       <div className="m-auto max-w-md text-center">
         <h1 className="mb-2 text-xl font-bold">Проект не найден</h1>
-        <p className="mb-5 text-mist-300">{STATIC_SITE ? 'На демо-сайте проекты живут, пока открыта вкладка, и пропадают при её перезагрузке.' : 'В демо-режиме проекты живут в памяти сервера и пропадают после его перезапуска.'}</p>
+        <p className="mb-5 text-mist-300">{STATIC_SITE ? 'На демо-сайте проекты живут, пока открыта вкладка, и пропадают при её перезагрузке.' : 'Такого проекта нет на этом сервере (в демо-режиме проекты живут в памяти и пропадают после перезапуска).'}</p>
         <Link href={HOME_HREF} className="rounded-xl bg-pen px-5 py-3 font-bold text-pen-ink">Начать новый</Link>
       </div>
     </div>
@@ -60,7 +60,7 @@ export function Studio({ id }: { id: string }) {
         <EditPanel project={p} n={selected} />
       </div>
       <Timeline project={p} selected={selected} onPick={setPicked} />
-      {showVideo && p.video && <BuildDialog src={p.video} title={p.title} onClose={() => setShowVideo(false)} />}
+      {showVideo && p.video && <BuildDialog src={p.video} title={p.title} demo={p.engine === 'demo'} onClose={() => setShowVideo(false)} />}
     </div>
   );
 }

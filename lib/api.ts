@@ -1,6 +1,6 @@
 // What the screens call. With a server: the API routes and the SSE stream. On the static demo site: the same
 // DemoEngine, running right here in the browser tab. The screens never need to know which one they talk to.
-import type { EngineEvent, ProjectSummary, StartSettings, StudioEngine } from './engine/types';
+import type { EngineEvent, ProjectSummary, ScenePatch, StartSettings, StudioEngine } from './engine/types';
 import { STATIC_SITE } from './site';
 
 export interface SettingsInfo { hasKey: boolean; engine: string; staticSite?: boolean }
@@ -49,8 +49,8 @@ export const api = {
     return () => { closed = true; stop(); };
   },
 
-  editScene: (id: string, scene: number, request: string): Promise<unknown> =>
-    STATIC_SITE ? run(e => e.editScene(id, scene, request)) : call(`/api/projects/${id}/edit`, post({ scene, request })),
+  editScene: (id: string, scene: number, request: string, patch?: ScenePatch): Promise<unknown> =>
+    STATIC_SITE ? run(e => e.editScene(id, scene, request, patch)) : call(`/api/projects/${id}/edit`, post({ scene, request, ...patch })),
 
   build: (id: string): Promise<unknown> =>
     STATIC_SITE ? run(e => e.build(id)) : call(`/api/projects/${id}/build`, { method: 'POST' }),

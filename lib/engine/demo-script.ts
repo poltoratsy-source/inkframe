@@ -3,7 +3,7 @@ import { frameSrc, type DemoCatalog } from './demo-catalog';
 import type { EngineEvent, Estimate, Look, ProjectState, SceneBoard, StageId, TimedEvent } from './types';
 import { MUSIC_NAMES, VOICE_NAMES } from '../options';
 import { FALLBACK_SPEED, estimate } from '../store/estimate';
-import { DEFAULT_BUDGET, type BudgetPolicy, type SceneNote } from '../store/types';
+import { DEFAULT_BUDGET, STAGE_NAMES, approvedWord, type BudgetPolicy, type SceneNote } from '../store/types';
 
 const SKETCH_MS = 450, COLOR_MS = 600, FPS = 12;
 /** The template each catalog scene of «Как работает лидар» was painted with (for the contact sheet and decisions). */
@@ -268,4 +268,14 @@ export function buildAssembleScript(_p: ProjectState, c: DemoCatalog, speed = 1,
   w.emit({ type: 'log.update', id: build, status: 'ok', text: 'MP4 готов — можно скачать', detail: c.videoLabel });
   w.emit({ type: 'status', status: 'done' });
   return w.out;
+}
+
+/** What «Утвердить» does on the screen: the stage is done, its gate closes, its log line says so (final: the cartoon is done). */
+export function approvalEvents(stage: StageId, version: number, note?: string): EngineEvent[] {
+  return [
+    { type: 'stage', stage, status: 'completed', version },
+    { type: 'gate', stage, version, open: false, summary: '' },
+    { type: 'log.update', id: `gate-${stage}-v${version}`, status: 'ok', text: stage === 'final' ? `Финал v${version} утверждён — ролик отдан` : `${STAGE_NAMES[stage]} v${version} ${approvedWord(stage)}`, detail: note ? `«${note}»` : '' },
+    ...(stage === 'final' ? [{ type: 'status', status: 'done' } as EngineEvent] : []),
+  ];
 }

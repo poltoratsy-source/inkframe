@@ -1,7 +1,8 @@
 // What the screens call. With a server: the API routes and the SSE stream. On the static demo site: the same
 // DemoEngine, running right here in the browser tab. The screens never need to know which one they talk to.
 import type { EngineEvent, ProjectState, ProjectSummary, Review, SceneNote, ScenePatch, StageId, StartSettings, StudioEngine } from './engine/types';
-import { STATIC_SITE } from './site';
+import type { Replay } from './engine/replay';
+import { DEMO_REPLAY_ID, STATIC_SITE } from './site';
 
 export interface SettingsInfo { hasKey: boolean; engine: string; staticSite?: boolean }
 export type ProjectEvent = EngineEvent | { type: 'missing' };
@@ -68,6 +69,16 @@ export const api = {
     STATIC_SITE
       ? run(e => { const r = e.get(id)?.review; if (!r) throw new Error('Ролик ещё не проверяли: сначала соберите MP4'); return r; })
       : call<Review>(`/api/projects/${id}/review`),
+
+  /** The run of a project as timed events (from its journal), or the demo run recorded in advance (DEMO_REPLAY_ID).
+   *  Fails with `missing` set when there is no such project. */
+  replay: async (id: string): Promise<Replay> => {
+    if (id === DEMO_REPLAY_ID) return import('./engine/demo').then(m => m.demoReplay());
+    if (!STATIC_SITE) return call<Replay>(`/api/projects/${encodeURIComponent(id)}/replay`).catch(e => { throw Object.assign(e, { missing: /не найден/.test(e.message) }); });
+    const r = await run(e => e.replay(id));
+    if (!r) throw Object.assign(new Error('Проект не найден'), { missing: true });
+    return r;
+  },
 
   settings: (): Promise<SettingsInfo> =>
     STATIC_SITE ? Promise.resolve({ hasKey: false, engine: 'demo', staticSite: true }) : call<SettingsInfo>('/api/settings'),

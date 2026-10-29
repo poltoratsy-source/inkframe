@@ -17,3 +17,12 @@ export const HOME_HREF = '/';
 
 /** Where a project's studio lives. Static hosting can't serve /studio/<random id>, so it uses a query string. */
 export const studioHref = (id: string) => (STATIC_SITE ? `/studio/?id=${encodeURIComponent(id)}` : `/studio/${id}`);
+
+/** The replay of a project's run ('demo' = the demo run recorded in advance). */
+export const replayHref = (id: string) => (STATIC_SITE ? `/replay/?id=${encodeURIComponent(id)}` : `/studio/${id}/replay`);
+
+/** Every project, with its state. */
+export const LIBRARY_HREF = '/library';
+
+/** The id of the demo run recorded in advance (lib/engine/demo.ts demoReplay), replayed without a project. */
+export const DEMO_REPLAY_ID = 'demo';

@@ -4,7 +4,8 @@ import { useEffect, useState } from 'react';
 import { TopBar } from '../TopBar';
 import { useProject } from '@/lib/useProject';
 import { api } from '@/lib/api';
-import { HOME_HREF, STATIC_SITE } from '@/lib/site';
+import { HOME_HREF, STATIC_SITE, replayHref } from '@/lib/site';
+import { useNow } from '@/lib/useNow';
 import { canBuild } from '@/lib/engine/reducer';
 import { STYLES } from '@/lib/options';
 import { WorkLog } from './WorkLog';
@@ -16,6 +17,7 @@ import { ScriptGate } from './ScriptGate';
 import { StoryboardGate } from './StoryboardGate';
 import { FinalGate } from './FinalGate';
 import { StageRail } from '../board/StageRail';
+import { WorkMeter } from '../board/WorkMeter';
 import { LIVE_STAGES, STAGE_NAMES } from '@/lib/store/types';
 
 const len = (s: number) => (s < 60 ? `${s} с` : `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`);
@@ -32,6 +34,9 @@ export function Studio({ id }: { id: string }) {
   // a cut that failed its self-review is not handed out: no video, but the report opens so the user sees why
   const failed = p?.review?.decision === 'FAIL' && !p.video;
   useEffect(() => { if ((p?.video && p.status === 'done') || (failed && p?.status === 'ready')) setShowVideo(true); }, [p?.video, p?.status, p?.review?.at, failed]);
+  // the time meter: since the work started against the plan; after it, plan against fact
+  const working = !!p?.estimate?.startedAt && p.estimate.actualSec === undefined && !p.gate;
+  const now = useNow(working);
 
   if (missing) return (
     <div className="flex h-screen flex-col"><TopBar />
@@ -59,6 +64,11 @@ export function Studio({ id }: { id: string }) {
     <div className="grid h-screen min-h-[760px] grid-rows-[56px_40px_minmax(0,1fr)_auto] overflow-hidden">
       <TopBar middle={<div className="truncate text-mist-300">Проект: «{p.title}» · {len(p.settings.duration)} · {style}</div>}>
         <span className="rounded-full bg-ink-650 px-3 py-1.5 text-[13px] text-mist-200">Рендер: 3 потока{p.engine === 'demo' ? ' · демо' : ''}</span>
+        {p.status === 'done' && (
+          <Link href={replayHref(id)} className="rounded-[9px] border border-ink-500 bg-ink-650 px-3 py-2 text-[13px] font-semibold text-mist-100 hover:bg-ink-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-pen">
+            ▶ Повтор прогона
+          </Link>
+        )}
         {failed && p.status !== 'building' && (
           <button onClick={() => setShowVideo(true)} className="rounded-full bg-danger-bg px-3 py-1.5 text-[13px] font-semibold text-danger hover:brightness-110">
             Проверка не пройдена — почему?
@@ -73,8 +83,9 @@ export function Studio({ id }: { id: string }) {
       <StageRail stages={LIVE_STAGES.map(id => ({ id, ...p.stages[id] }))} />
       <div className="grid min-h-0 grid-cols-[330px_minmax(0,1fr)_320px]">
         <WorkLog idea={p.settings.idea} log={p.log} />
-        <div className="relative grid min-h-0 min-w-0">
+        <div className="relative grid min-h-0 min-w-0 grid-rows-[minmax(0,1fr)_auto]">
           <Stage project={p} selected={selected} error={err} />
+          {p.estimate && (working || (p.estimate.actualSec !== undefined && !p.gate)) && <div className="px-5 pb-3"><WorkMeter e={p.estimate} now={now} /></div>}
           {gateStage && (
             // narrow screens: the three-column studio does not fit yet, so the gate opens on top of everything
             <div className="absolute inset-0 z-10 overflow-y-auto bg-ink-900/85 px-5 py-4 max-lg:fixed max-lg:inset-x-0 max-lg:top-24 max-lg:bottom-0 max-lg:z-40 max-lg:px-4">

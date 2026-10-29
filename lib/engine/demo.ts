@@ -3,18 +3,42 @@
 // It stops at the same three gates as the real engine — script, storyboard (a contact sheet of key frames), final
 // (the MP4 with its review) — with checkpoints in memory and the same rules as the file store, so the static demo
 // site shows the gates too: approve goes on, revise shows «переделываю» and the next version.
+// Every project keeps a journal in memory — the same events, by the same rule, as the real engine's events.jsonl —
+// so «▶ Повтор прогона» works on the static site too; demoReplay() is a whole run recorded in advance.
 import { DEMO_CATALOG, type DemoCatalog } from './demo-catalog';
-import { buildAssembleScript, buildEditScript, buildKeysScript, buildProduceScript, buildWriteScript, demoEstimate } from './demo-script';
+import { approvalEvents, buildAssembleScript, buildEditScript, buildKeysScript, buildProduceScript, buildWriteScript, demoEstimate } from './demo-script';
 import { applyEvent, canBuild, emptyProject } from './reducer';
+import { libraryOf } from './library';
+import { buildReplay, forJournal, type Replay, type SceneFrames, type Stamped } from './replay';
+import { DEFAULT_SETTINGS } from '../options';
 import type { ApproveOptions, EngineEvent, Estimate, ProjectState, ProjectSummary, ReviseOptions, ScenePatch, StageId, StartSettings, StudioEngine, TimedEvent } from './types';
 import { approveVersion, GateError, reviseVersion } from '../store/gate';
-import { DEFAULT_BUDGET, DEFAULT_GATES, STAGE_NAMES, approvedWord, type BudgetPolicy, type Checkpoint, type GatePolicy, type SceneNote } from '../store/types';
+import { DEFAULT_BUDGET, DEFAULT_GATES, STAGE_NAMES, type BudgetPolicy, type Checkpoint, type GatePolicy, type SceneNote } from '../store/types';
 
 interface Entry {
   state: ProjectState; listeners: Set<(ev: EngineEvent) => void>; queue: (() => TimedEvent[])[]; playing: boolean;
   checkpoints: Map<StageId, Checkpoint>;
   /** the estimate of the work an approve started, and when it started (the fact is the demo's own playing time) */
   plan?: Estimate; workStart?: number; cuts: number;
+  /** the journal: what events.jsonl would hold (no frames), and the frames drawn per scene (what the files would be) */
+  journal: Journal;
+}
+
+/** The demo's events.jsonl: journaled events with their time, and each scene's frames as its files would hold them. */
+class Journal {
+  items: Stamped[] = [];
+  frames: Record<number, SceneFrames> = {};
+  add(ev: EngineEvent, before: ProjectState, t = Date.now()) {
+    if (ev.type === 'frame') {
+      const f = (this.frames[ev.n] ??= { sketch: [], color: [] }), list = ev.kind === 'sketch' ? f.sketch : f.color;
+      if (!list.includes(ev.src)) list.push(ev.src);
+      return;
+    }
+    // a scene drawn again starts its frames afresh (the real engine keeps only the newest version's folder)
+    if (ev.type === 'scene.status' && ev.status === 'sketch') this.frames[ev.n] = { sketch: [], color: [] };
+    const kept = forJournal(ev, before);
+    if (kept) this.items.push({ t, ev: kept });
+  }
 }
 
 export class DemoEngine implements StudioEngine {
@@ -33,7 +57,7 @@ export class DemoEngine implements StudioEngine {
   create(settings: StartSettings): ProjectState {
     if (!settings.idea?.trim()) throw new Error('The idea is empty');
     const id = globalThis.crypto.randomUUID().slice(0, 8);   // Web Crypto: works in Node and in the browser (static demo site)
-    const e: Entry = { state: emptyProject(id, settings, 'demo'), listeners: new Set(), queue: [], playing: false, checkpoints: new Map(), cuts: 0 };
+    const e: Entry = { state: emptyProject(id, settings, 'demo'), listeners: new Set(), queue: [], playing: false, checkpoints: new Map(), cuts: 0, journal: new Journal() };
     this.projects.set(id, e);
     const gated = this.gates.script;
     this.enqueue(e, () => buildWriteScript(e.state, this.catalog, this.speed, {
@@ -67,17 +91,13 @@ export class DemoEngine implements StudioEngine {
     const { cp, changed } = approveVersion(e.checkpoints.get(stage), stage, version, note, undefined, o.allowOverCap === true);
     if (!changed) return e.state;
     e.checkpoints.set(stage, cp);
-    this.emit(e, { type: 'stage', stage, status: 'completed', version });
-    this.emit(e, { type: 'gate', stage, version, open: false, summary: '' });
-    this.emit(e, { type: 'log.update', id: `gate-${stage}-v${version}`, status: 'ok', text: stage === 'final' ? `Финал v${version} утверждён — ролик отдан` : `${STAGE_NAMES[stage]} v${version} ${approvedWord(stage)}`, detail: cp.approval?.note ? `«${cp.approval.note}»` : '' });
+    for (const ev of approvalEvents(stage, version, cp.approval?.note)) this.emit(e, ev);
     if (stage === 'script') {
-      if (!this.gates.storyboard) { e.plan = cp.estimate; e.workStart = Date.now(); }
+      if (!this.gates.storyboard) this.startWork(e, cp.estimate);
       this.afterScript(e);
     } else if (stage === 'storyboard') {
-      e.plan = cp.estimate; e.workStart = Date.now();
+      this.startWork(e, cp.estimate);
       this.paintAndCut(e, 1);
-    } else if (stage === 'final') {
-      this.emit(e, { type: 'status', status: 'done' });
     }
     return e.state;
   }
@@ -106,13 +126,22 @@ export class DemoEngine implements StudioEngine {
     return e.state;
   }
 
+  /** The work an approve started: its estimate, with the start time the board counts from. */
+  private startWork(e: Entry, plan: Estimate | undefined) {
+    e.workStart = Date.now();
+    e.plan = plan && { ...plan, startedAt: new Date(e.workStart).toISOString() };
+    if (e.plan) this.emit(e, { type: 'estimate', estimate: e.plan });
+  }
+
   get(id: string) { return this.projects.get(id)?.state; }
 
   list(): ProjectSummary[] {
-    return [...this.projects.values()].map(({ state: s }) => ({
-      id: s.id, title: s.title, status: s.status, duration: s.settings.duration, style: s.settings.style, createdAt: s.createdAt,
-      thumb: s.scenes.find(sc => sc.frameKind === 'color')?.frame ?? s.scenes[0]?.frame,
-    })).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    return libraryOf([...this.projects.values()].map(e => e.state));
+  }
+
+  replay(id: string): Replay | undefined {
+    const e = this.projects.get(id);
+    return e && buildReplay(e.state, e.journal.items, e.journal.frames);
   }
 
   subscribe(id: string, listener: (ev: EngineEvent) => void) {
@@ -179,8 +208,7 @@ export class DemoEngine implements StudioEngine {
       if (ev.stage === 'final' && e.plan && e.workStart) {
         const done = { ...e.plan, actualSec: Math.round((Date.now() - e.workStart) / 100) / 10 };
         e.plan = undefined; e.workStart = undefined;
-        e.state = applyEvent(e.state, { type: 'estimate', estimate: done });
-        for (const l of e.listeners) l({ type: 'estimate', estimate: done });
+        this.send(e, { type: 'estimate', estimate: done });
       }
       const estimate = ev.stage !== 'final' ? e.state.estimate : undefined;
       e.checkpoints.set(ev.stage, {
@@ -188,9 +216,43 @@ export class DemoEngine implements StudioEngine {
         artifact: e.state.scenes.map(({ n, title, line, start, duration }) => ({ n, title, line, start, duration })),
       });
     }
+    this.send(e, ev);
+  }
+
+  /** Into the journal, the state and every listener. */
+  private send(e: Entry, ev: EngineEvent) {
+    e.journal.add(ev, e.state);
     e.state = applyEvent(e.state, ev);
     for (const l of e.listeners) l(ev);
   }
+}
+
+/** A whole demo run recorded in advance — script, storyboard and final gates each approved after a short look — as a
+ *  replay, for «▶ Повтор» on the static site before anyone has made a cartoon there. */
+export function demoReplay(c: DemoCatalog = DEMO_CATALOG, at = '2026-10-29T09:00:00.000Z'): Replay {
+  const settings = { ...DEFAULT_SETTINGS, idea: 'Как беспилотная машина видит в темноте: лидар для школьников', duration: 30 };
+  const journal = new Journal();
+  let p = emptyProject('demo', settings, 'demo', at), t = Date.parse(at), plan: Estimate | undefined, workStart = 0;
+  const send = (ev: EngineEvent, when = t) => { journal.add(ev, p, when); p = applyEvent(p, ev); };
+  const play = (script: TimedEvent[]) => {
+    for (const x of script) {
+      if (x.ev.type === 'gate' && x.ev.open && x.ev.stage === 'final' && plan) send({ type: 'estimate', estimate: { ...plan, actualSec: Math.round((t + x.at - workStart) / 100) / 10 } }, t + x.at);
+      send(x.ev, t + x.at);
+    }
+    t += (script[script.length - 1]?.at ?? 0) + 250;
+  };
+  const approve = (stage: StageId, lookMs: number) => { t += lookMs; for (const ev of approvalEvents(stage, 1)) send(ev); t += 200; };
+  play(buildWriteScript(p, c, 1, { version: 1, gated: true, storyboardNext: true, estimate: demoEstimate(p, c, 'script', DEFAULT_BUDGET, true) }));
+  approve('script', 9000);
+  play(buildKeysScript(p, c, 1, { version: 1, estimate: demoEstimate(p, c, 'storyboard') }));
+  approve('storyboard', 12000);
+  workStart = t;
+  plan = { ...p.estimate!, startedAt: new Date(t).toISOString() };
+  send({ type: 'estimate', estimate: plan });
+  play(buildProduceScript(p, c, 1, { cut: true }));
+  play(buildAssembleScript(p, c, 1, { n: 1, final: { version: 1 } }));
+  approve('final', 8000);
+  return buildReplay(p, journal.items, journal.frames);
 }
 
 /** The scene a final-gate note is about: picked in the panel, or «сцена 2: …» at the start of the note. */

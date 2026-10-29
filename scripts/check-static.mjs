@@ -1,7 +1,9 @@
 // node scripts/check-static.mjs <siteUrl> [shotsDir] — smoke test of the static demo in headless Chrome:
 // the start screen opens, "Начать рисовать" starts the simulation, it stops at the script gate, "Утвердить" opens the
 // storyboard gate (a key frame on every card), "Утвердить" lets it draw and cut, the final gate shows the MP4 with its
-// review, "Утвердить" hands it out and the video in "MP4 готов" plays.
+// review, "Утвердить" hands it out and the video in "MP4 готов" plays. M5: «▶ Повтор прогона» replays that run (the
+// slider plays, End shows every stage done and every card with its frame), the library shows the project as «готово»,
+// and the demo run recorded in advance replays from the start screen.
 import puppeteer from 'puppeteer-core';
 import { mkdirSync } from 'node:fs';
 import { findChrome, CHROME_ARGS } from './chrome.mjs';
@@ -57,5 +59,36 @@ await sleep(4000);
 const v = await page.evaluate(() => { const v = document.querySelector('[role="dialog"] video'); return { t: v.currentTime, paused: v.paused, w: v.videoWidth, h: v.videoHeight, err: v.error && v.error.code }; });
 ok(!v.err && v.t > 1 && v.w > 0, `video plays in "MP4 готов" (t=${v.t.toFixed(1)} s, ${v.w}×${v.h})`);
 if (shots) await page.screenshot({ path: `${shots}/static-04-mp4.png` });
+
+// M5: the replay of this very run, from the demo engine's journal
+await page.keyboard.press('Escape');
+await sleep(300);
+ok(await clickText('a', 'Повтор прогона'), '«▶ Повтор прогона» in the studio');
+const slider = '[role="slider"][aria-label="Повтор прогона"]';
+await page.waitForSelector(slider, { timeout: 15000 });
+const now = () => page.$eval(slider, el => Number(el.getAttribute('aria-valuenow')));
+const t1 = await now(); await sleep(2500); const t2 = await now();
+ok(t2 > t1, `the replay plays (${t1} → ${t2} s)`);
+if (shots) await page.screenshot({ path: `${shots}/static-05-replay.png` });
+await page.focus(slider); await page.keyboard.press('End'); await sleep(600);
+const atEnd = await page.evaluate(() => ({
+  done: document.querySelectorAll('ol li .sr-only').length && [...document.querySelectorAll('ol li .sr-only')].every(s => s.textContent.includes('готово')),
+  cards: [...document.querySelectorAll('[aria-label="Сцены"] img')].filter(i => i.complete && i.naturalWidth > 0).length,
+}));
+ok(atEnd.done && atEnd.cards >= 3, `End: every stage done, ${atEnd.cards} cards with frames`);
+await page.focus(slider); await page.keyboard.press('Home'); await sleep(400);
+ok(await now() === 0, 'Home goes back to the start');
+// the library, reached in-app (a reload would start a fresh demo engine: the static site keeps projects per tab)
+ok(await clickText('header a', 'Библиотека'), 'replay → «Библиотека»');
+await page.waitForFunction(() => document.querySelector('main ul li a'), { timeout: 15000 }).catch(() => {});
+const card = await page.evaluate(() => document.querySelector('main ul li a')?.textContent ?? '');
+ok(/готово/.test(card), `the library shows the project as «готово» (${card.slice(0, 60)})`);
+ok(await page.evaluate(() => document.body.textContent.includes('Повтор демо-прогона')), 'the library offers the demo replay');
+if (shots) await page.screenshot({ path: `${shots}/static-06-library.png` });
+await page.goto(url, { waitUntil: 'networkidle0' });
+ok(await clickText('a', 'Повтор демо-прогона'), 'start screen: «▶ Повтор демо-прогона»');
+await page.waitForSelector(slider, { timeout: 15000 });
+await sleep(2500);
+ok(await now() > 0 && await page.evaluate(() => document.body.textContent.includes('демо, записан заранее')), 'the demo run recorded in advance plays');
 ok(errors.length === 0, 'no page errors or failed requests' + (errors.length ? ': ' + errors.slice(0, 5).join(' | ') : ''));
 await browser.close();

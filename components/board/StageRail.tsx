@@ -14,7 +14,7 @@ export function StageRail({ stages }: { stages: StageView[] }) {
     <ol className="flex h-10 items-center gap-1.5 overflow-x-auto border-b border-ink-600 bg-ink-850 px-4 text-[12px] font-semibold">
       {stages.map((s, i) => (
         <li key={s.id} aria-current={s.status === 'in_progress' || s.status === 'awaiting' ? 'step' : undefined}
-          className={`flex flex-none items-center gap-1.5 ${s.status === 'pending' ? 'text-mist-500' : s.status === 'awaiting' ? 'text-gate' : 'text-mist-200'}`}>
+          className={`relative flex flex-none items-center gap-1.5 ${s.status === 'pending' ? 'text-mist-500' : s.status === 'awaiting' ? 'text-gate' : 'text-mist-200'}`}>
           {i > 0 && <span aria-hidden className="mx-1 h-px w-4 bg-ink-500" />}
           <span aria-hidden className={`flex size-[16px] items-center justify-center rounded-full text-[10px] ${DOT[s.status]}`}>
             {s.status === 'completed' ? '✓' : s.status === 'revised' ? '↺' : s.status === 'failed' ? '!' : ''}

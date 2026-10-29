@@ -23,14 +23,18 @@
 // A restart resumes an unfinished stage: the script / storyboard is written again, paint and voice go on from the
 // first unfinished scene, a cut repaints only the clips that are not in the cache; an open gate just waits.
 // INKFRAME_GATES=off skips every gate.
+// Everything the studio sees, except single frames, is journaled in events.jsonl (lib/engine/replay.ts): replay()
+// folds it again with the same reducer, with the frames taken from each scene's own folder.
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { applyEvent, canBuild, emptyProject, normalizeProject } from './reducer';
+import { libraryOf } from './library';
+import { journalLine, replayFromJournal, spread, type Replay, type SceneFrames } from './replay';
 import type { ApproveOptions, EngineEvent, LogStep, ProjectState, ProjectSummary, ReviseOptions, ScenePatch, StageId, StageStatus, StartSettings, StepStatus, StudioEngine } from './types';
 import { StageStore, readBudget, readGatePolicy } from '../store/stages';
 import { GateError } from '../store/gate';
-import { STAGE_NAMES, approvedWord, type Approval, type BudgetPolicy, type Checkpoint, type Decision, type Estimate, type GatePolicy, type LoggedEvent, type Review, type SceneNote } from '../store/types';
+import { STAGE_NAMES, approvedWord, type Approval, type BudgetPolicy, type Checkpoint, type Decision, type Estimate, type GatePolicy, type Review, type SceneNote } from '../store/types';
 import { MUSIC_NAMES, OPTIONS, STYLES, VOICE_NAMES } from '../options';
 import { askClaude } from '../real/claude';
 import { Painter, rendererVersion, type FrameOptions } from '../real/painter';
@@ -131,10 +135,22 @@ export class RealEngine implements StudioEngine {
   get(id: string) { return this.projects.get(id)?.state; }
 
   list(): ProjectSummary[] {
-    return [...this.projects.values()].map(({ state: s }) => ({
-      id: s.id, title: s.title, status: s.status, duration: s.settings.duration, style: s.settings.style, createdAt: s.createdAt,
-      thumb: s.scenes.find(sc => sc.frameKind === 'color')?.frame ?? s.scenes[0]?.frame,
-    })).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    return libraryOf([...this.projects.values()].map(e => e.state));
+  }
+
+  /** The run from events.jsonl; frames from each scene's newest folder (frames/s<n>-v<version>/), never from the journal. */
+  replay(id: string): Replay | undefined {
+    const e = this.projects.get(id);
+    if (!e) return undefined;
+    const frames: Record<number, SceneFrames> = {}, root = join(e.dir, 'frames');
+    const dirs = existsSync(root) ? readdirSync(root) : [];
+    for (const sc of e.state.scenes) {
+      const v = dirs.map(d => d.match(new RegExp(`^s${sc.n}-v(\\d+)$`))?.[1]).filter(Boolean).map(Number).sort((a, b) => b - a)[0];
+      if (!v) continue;
+      const rel = `frames/s${sc.n}-v${v}`, files = readdirSync(join(e.dir, rel)).sort(), url = (f: string) => `/api/projects/${id}/files/${rel}/${f}`;
+      frames[sc.n] = { sketch: spread(files.filter(f => f.startsWith('sketch-')), 8).map(url), color: spread(files.filter(f => f.startsWith('color-')), 8).map(url) };
+    }
+    return replayFromJournal(e.state, e.store.events(), frames);
   }
 
   subscribe(id: string, listener: (ev: EngineEvent) => void) {
@@ -812,7 +828,10 @@ export class RealEngine implements StudioEngine {
 
   /** The work an approve (or a cut by hand) starts: its estimate and the clock for the fact. */
   private startWork(e: Entry, plan: Estimate | undefined) {
-    e.plan = plan; e.workStart = Date.now(); e.parts = { voice: 0, paint: 0, cut: 0 };
+    e.workStart = Date.now(); e.parts = { voice: 0, paint: 0, cut: 0 };
+    // the board counts the time since the start against the plan
+    e.plan = plan && { ...plan, startedAt: new Date(e.workStart).toISOString() };
+    if (e.plan) this.emit(e, { type: 'estimate', estimate: e.plan });
   }
 
   /** The work is over: the fact goes next to the estimate (estimate.json, the screen, the decision log). */
@@ -940,8 +959,8 @@ export class RealEngine implements StudioEngine {
   }
 
   private emit(e: Entry, ev: EngineEvent) {
+    const line = journalLine(ev, e.state);
     e.state = applyEvent(e.state, ev);
-    const line = journalLine(ev);
     if (line) { try { e.store.log(line); } catch (err) { console.warn('[inkframe] events.jsonl:', (err as Error).message); } }
     for (const l of e.listeners) { try { l(ev); } catch { /* a closed stream */ } }
   }
@@ -982,23 +1001,6 @@ export class RealEngine implements StudioEngine {
         }
       } catch { /* not a project */ }
     }
-  }
-}
-
-/** What goes to events.jsonl: stages, gates, one line per scene step, cuts and errors — never single frames. */
-function journalLine(ev: EngineEvent): Omit<LoggedEvent, 'at'> | undefined {
-  switch (ev.type) {
-    case 'stage': return { kind: 'stage', stage: ev.stage, payload: { status: ev.status, version: ev.version } };
-    case 'gate': return { kind: 'gate', stage: ev.stage, payload: { open: ev.open, version: ev.version, ...(ev.open && { summary: ev.summary }) } };
-    case 'scene.status': return { kind: 'scene', stage: 'paint', scene: ev.n, payload: { status: ev.status } };
-    case 'scene.edited': return { kind: 'scene', stage: 'paint', scene: ev.n, payload: { edited: ev.request } };
-    case 'video': return { kind: 'cut', stage: 'compose', payload: { src: ev.src } };
-    case 'estimate': return { kind: 'estimate', stage: ev.estimate.stage, payload: { totalSec: ev.estimate.totalSec, frames: ev.estimate.frames, mode: ev.estimate.mode, ...(ev.estimate.actualSec !== undefined && { actualSec: ev.estimate.actualSec }) } };
-    case 'decision': return { kind: 'decision', stage: ev.decision.stage, ...(ev.decision.scene && { scene: ev.decision.scene }), payload: { what: ev.decision.what, chosen: ev.decision.chosen } };
-    case 'review': return { kind: 'review', stage: 'review', payload: { decision: ev.review.decision, video: ev.review.video, faults: ev.review.checks.filter(c => !c.ok).map(c => ({ id: c.id, warn: !!c.warn, detail: c.detail, ...(c.at && { at: c.at }) })) } };
-    case 'log.add': return ev.step.status === 'err' ? { kind: 'error', payload: { text: ev.step.text, detail: ev.step.detail ?? '' } } : undefined;
-    case 'log.update': return ev.status === 'err' ? { kind: 'error', payload: { id: ev.id, text: ev.text ?? '', detail: ev.detail ?? '' } } : undefined;
-    default: return undefined;
   }
 }
 

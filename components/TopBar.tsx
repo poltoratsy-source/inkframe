@@ -16,7 +16,7 @@ export function TopBar({ middle, children, local = false }: { middle?: React.Rea
       {middle}
       <div className="flex-1" />
       {local && <span className="rounded-full bg-ink-650 px-3 py-1.5 text-[13px] text-mist-200"><span className="text-ok">●</span> Локально · этот компьютер</span>}
-      <button onClick={() => setOpen(true)} className="rounded-full bg-ink-650 px-3 py-1.5 text-[13px] text-mist-200 hover:bg-ink-550" title="Подключение Claude">
+      <button onClick={() => setOpen(true)} className="rounded-full bg-ink-650 px-3 py-1.5 text-[13px] text-mist-200 hover:bg-ink-550 max-sm:hidden" title="Подключение Claude">
         {key?.engine === 'demo' ? 'Claude · демо-режим' : key?.hasKey ? 'Claude · ключ подключён ✓' : 'Claude · вход Claude Code'}
       </button>
       {children}

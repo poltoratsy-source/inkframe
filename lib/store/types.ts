@@ -1,5 +1,6 @@
 // Inkframe 3 production control: the stages a cartoon goes through, their checkpoints and the event journal.
 // Plain types and pure helpers only, so the browser demo and the server share them (see replica/schema.md).
+import type { EngineEvent } from '../engine/types';
 
 export type StageId = 'brief' | 'script' | 'storyboard' | 'paint' | 'voice' | 'compose' | 'review' | 'final';
 export type StageStatus = 'pending' | 'in_progress' | 'awaiting' | 'completed' | 'revised' | 'failed';
@@ -88,6 +89,8 @@ export interface Estimate {
   claudeCalls: number;
   diskMb: number;
   mode: BudgetMode; capSec?: number;
+  /** when the work under this estimate started (an approve, or «Собрать MP4»): the board counts the time since */
+  startedAt?: string;
   /** wall time the work really took, filled in when it is over */
   actualSec?: number;
   actual?: { paintSec: number; voiceSec: number; cutSec: number };
@@ -112,14 +115,21 @@ export interface Decision {
   estimate?: Estimate;
 }
 
-/** projects/<id>/events.jsonl — one JSON per line, append-only */
+/** projects/<id>/events.jsonl — one JSON per line, append-only. Never single frames: one line per scene step, stage,
+ *  gate, decision, log line; progress in 5 % steps (lib/engine/replay.ts). */
 export interface LoggedEvent {
   at: string;
   stage?: StageId;
   scene?: number;
-  kind: 'stage' | 'gate' | 'scene' | 'frame' | 'voice' | 'cut' | 'review' | 'decision' | 'estimate' | 'error' | 'log';
+  kind: 'stage' | 'gate' | 'scene' | 'frame' | 'voice' | 'cut' | 'review' | 'decision' | 'estimate' | 'error' | 'log'
+    | 'status' | 'storyboard' | 'key' | 'board' | 'track' | 'progress';
   payload: Record<string, unknown>;
+  /** the engine event itself, for the replay (M5 on; lines written before have none) */
+  ev?: EngineEvent;
 }
+
+/** How a project looks in the library and in «Недавние». */
+export type LibraryBadge = 'drawing' | 'awaiting' | 'done' | 'error' | 'draft';
 
 /** What ProjectState carries for the screens: one line per stage. */
 export type StageMap = Record<StageId, { status: StageStatus; version: number }>;

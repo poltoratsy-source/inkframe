@@ -3,7 +3,9 @@ import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import type { ProjectSummary } from '@/lib/engine/types';
 import { api } from '@/lib/api';
-import { asset, studioHref } from '@/lib/site';
+import { DEMO_REPLAY_ID, LIBRARY_HREF, asset, replayHref } from '@/lib/site';
+import { LibraryCard } from '../board/LibraryCard';
+import { libraryCardOf } from '../board/fromProject';
 
 // Examples made with the same painted engine, shown until you have projects of your own.
 const SHOWCASE = [
@@ -11,21 +13,22 @@ const SHOWCASE = [
   { title: 'Как работает лидар', meta: 'акварель · 1:07 · готово', thumb: asset('demo/styles/k3.jpg') },
   { title: 'ИИ-сотрудник', meta: 'Reels · 0:30 · готово', thumb: asset('demo/styles/st-reels.jpg') },
 ];
-const STATUS: Record<string, string> = { drafting: 'сценарий', awaiting: 'ждёт вас', drawing: 'рисуется', ready: 'готово к сборке', building: 'сборка', done: 'готово' };
-const mmss = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 
+/** «Недавние»: your projects with their state (ждёт вас and рисую on top), then the examples. */
 export function RecentProjects() {
   const [mine, setMine] = useState<ProjectSummary[]>([]);
   useEffect(() => { api.listProjects().then(setMine).catch(() => {}); }, []);
   return (
     <aside className="flex flex-col gap-3 overflow-y-auto border-l border-ink-600 bg-ink-850 px-[18px] py-[22px]">
-      <h3 className="label">Недавние проекты</h3>
-      {mine.slice(0, 5).map(p => (
-        <Link key={p.id} href={studioHref(p.id)} className="flex items-center gap-2.5 rounded-[10px] border border-ink-550 bg-ink-750 p-2 hover:border-pen/60">
-          {p.thumb ? <img src={p.thumb} alt="" className="h-12 w-[84px] rounded-md object-cover" /> : <div className="h-12 w-[84px] rounded-md bg-ink-600" />}
-          <div className="min-w-0"><div className="truncate text-[13px] font-semibold">{p.title}</div><div className="text-[11.5px] text-mist-400">акварель · {mmss(p.duration)} · {STATUS[p.status]}</div></div>
-        </Link>
-      ))}
+      <div className="flex items-baseline justify-between gap-2">
+        <h3 className="label">Недавние проекты</h3>
+        <Link href={LIBRARY_HREF} className="text-[12px] text-mist-300 hover:text-pen focus-visible:outline focus-visible:outline-2 focus-visible:outline-pen">Вся библиотека →</Link>
+      </div>
+      {mine.slice(0, 5).map(p => <LibraryCard key={p.id} c={libraryCardOf(p)} compact />)}
+      <Link href={replayHref(DEMO_REPLAY_ID)} className="flex items-center gap-2.5 rounded-[10px] border border-ink-550 bg-ink-750 p-2 hover:border-pen/60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-pen">
+        <img src={asset('demo/frames/s3-4.jpg')} alt="" className="h-12 w-[84px] rounded-md object-cover" />
+        <div className="min-w-0"><div className="text-[13px] font-semibold">▶ Повтор демо-прогона</div><div className="text-[11.5px] text-mist-400">как рисовался «лидар» — за минуту</div></div>
+      </Link>
       {SHOWCASE.map(p => (
         <div key={p.title} className="flex items-center gap-2.5 rounded-[10px] border border-ink-550 bg-ink-750 p-2">
           <img src={p.thumb} alt="" className="h-12 w-[84px] rounded-md object-cover" />

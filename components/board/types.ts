@@ -11,7 +11,11 @@ export const STAGE_TITLES: Record<StageId, string> = {
 };
 
 export type CardStatus = 'queued' | 'sketch' | 'painting' | 'done' | 'awaiting' | 'redraw';
-export interface SceneCardView { n: number; title: string; line: string; start: number; duration: number; template: string; frame?: string; status: CardStatus; edits: number; note?: string }
+export interface SceneCardView {
+  n: number; title: string; line: string; start: number; duration: number; template: string; frame?: string; status: CardStatus; edits: number; note?: string;
+  /** the scene's version: +1 with every redraw (v1 is not shown) */
+  version?: number;
+}
 
 export interface EstimateView {
   frames: number; workers: number; paintSec: number; voiceSec: number; cutSec: number; claudeCalls: number; diskMb: number;
@@ -19,6 +23,8 @@ export interface EstimateView {
   /** the engine's Estimate carries these too: s/frame measured on this server or the fallback, and the fact by part */
   measured?: boolean; keyFrames?: number; draftFrames?: number; finalFrames?: number;
   actual?: { paintSec: number; voiceSec: number; cutSec: number };
+  /** when the work under this estimate started (ISO): the board counts the time since */
+  startedAt?: string;
 }
 /** Over the cap and not yet done: «Утвердить» needs the permission box. */
 export const needsPermission = (e: EstimateView | undefined) =>
@@ -29,5 +35,5 @@ export interface ReviewView { decision: 'PASS' | 'WARN' | 'FAIL'; checks: { id: 
 
 export type Badge = 'drawing' | 'awaiting' | 'done' | 'error' | 'draft';
 
-export const mmss = (s: number) => `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, '0')}`;
+export const mmss = (s: number) => { const t = Math.max(0, Math.floor(s)); return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`; };
 export const dur = (s: number) => (s < 60 ? `${Math.round(s)} с` : `${Math.round(s / 60)} мин`);

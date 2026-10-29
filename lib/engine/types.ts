@@ -2,8 +2,9 @@
 // DemoEngine plays pre-rendered frames on a timer; RealEngine (lib/engine/real.ts) has Claude write the storyboard
 // and paints it with the painted renderer. Both emit the same EngineEvents, so the screens never need to know which one runs.
 // Inkframe 3: a run goes through stages (lib/store/types.ts); a gated stage stops in `awaiting` until approve() or revise().
-import type { Decision, Estimate, OpenGate, Review, SceneNote, StageId, StageMap, StageStatus } from '../store/types';
-export type { Decision, Estimate, OpenGate, Review, SceneNote, StageId, StageMap, StageStatus } from '../store/types';
+import type { Decision, Estimate, LibraryBadge, OpenGate, Review, SceneNote, StageId, StageMap, StageStatus } from '../store/types';
+export type { Decision, Estimate, LibraryBadge, OpenGate, Review, SceneNote, StageId, StageMap, StageStatus } from '../store/types';
+import type { Replay } from './replay';
 
 export type StyleId = 'watercolor' | 'kinetic' | 'reels' | 'promo' | 'science' | 'board' | 'clip';
 
@@ -84,7 +85,15 @@ export interface ProjectState {
   estimate?: Estimate;
 }
 
-export interface ProjectSummary { id: string; title: string; status: ProjectStatus; duration: number; style: StyleId; thumb?: string; createdAt: string }
+export interface ProjectSummary {
+  id: string; title: string; status: ProjectStatus; duration: number; style: StyleId; thumb?: string; createdAt: string;
+  /** the stage the project is at (the live one, or the last one done) and its status */
+  stage: StageId; stageStatus: StageStatus;
+  /** the stage whose gate waits for a human */
+  awaiting?: StageId;
+  badge: LibraryBadge;
+  scenes: number;
+}
 
 export type EngineEvent =
   | { type: 'snapshot'; state: ProjectState }
@@ -136,4 +145,6 @@ export interface StudioEngine {
   approve(id: string, stage: StageId, version: number, note?: string, o?: ApproveOptions): ProjectState;
   /** Sends `version` back with a note: the stage is redone (version + 1) and the gate opens again. */
   revise(id: string, stage: StageId, version: number, note: string, o?: ReviseOptions): ProjectState;
+  /** The run as timed events for the replay (from events.jsonl, frames from the scene's files); undefined = no such project. */
+  replay(id: string): Replay | undefined;
 }

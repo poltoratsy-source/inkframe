@@ -1,0 +1,36 @@
+feature,area,priority,original,clone,notes
+Line boil: seeded hand-drawn wobble stepped off the timeline,ink engine,must,yes,partial,"EXISTS: core.js BOIL=12 fps + boilSeed(key) per element; add: amplitude/fps per style pack and per element (hold still props, boil ink only)"
+Spring easing presets (settle overshoot bouncy soft) closed-form,ink engine,must,yes,partial,"EXISTS: backOut elasticOut spring/ring in core.js; add: named closed-form presets settle/overshoot/bouncy/soft + anticipation, use in templates and Clawd"
+Deterministic frames (seeded PRNG only no clocks),ink engine,must,yes,yes,timeline.js contract: pure function of t; parallel out-of-order frames
+Script approval gate,gates,must,yes,no,Claude writes; studio waits for yes or a note
+Storyboard contact-sheet gate (key frame + words + timing per scene),gates,must,yes,no,before full paint
+Final render gate before handing the MP4,gates,should,yes,no,
+In-progress checkpoints and resume after a crash,gates,must,yes,partial,project.json saved and reloaded on start (RealEngine.load); add per-stage status + resume of an unfinished stage
+Versioned stage history (revisions never destroyed),gates,should,yes,no,history/ per stage
+Post-render self-review (ffprobe frames silence clipping subtitles),quality,must,yes,no,lib/real/review.ts
+Pre-paint validation (spec sane timing fits voice),quality,should,yes,partial,scene-spec drops unknown values today
+Slideshow-risk check (same template too often weak motion),quality,could,yes,no,
+Output profile 9:16 vertical,output,must,yes,partial,EXISTS: stage ?tall = 1080x1920; MISSING: settings.format not passed by the real engine; templates hard-code 1920x1080 positions (layout per format needed)
+Output profile 1:1 square,output,should,yes,no,same layout work as 9:16
+Living board: stage rail and scene cards filling in live,board,must,yes,partial,Stage + Timeline + WorkLog exist; add rail + gate states
+Activity feed from an events log,board,should,yes,partial,WorkLog; persist to events.jsonl
+Replay a finished run from timestamps,board,should,yes,no,
+Library of all productions,board,could,yes,no,
+Time and cost estimate before paint shown on the gate,budget,should,yes,no,frames x seconds per frame + Claude calls
+Budget modes observe warn cap,budget,could,yes,no,
+Decision log (chosen alternatives reason),audit,should,yes,no,show in WorkLog
+Style packs (STYLE notes + palette + brush + paper + boil),styles,should,yes,no,start with Watercolour + Ink
+Colour grammar for the Ink style (black structure orange flow red problem blue good end),styles,should,yes,no,
+Clawd arms by 2D IK reaching props,character,should,yes,no,FABRIK written fresh
+Contraption props (crank lever gauge hopper slot box) + machine template,props,should,yes,no,
+Metaphor rules in the storyboard prompt (concept to action to object to host),storyboard,should,yes,no,lib/real/storyboard.ts
+Speech balloons tethered to the mouth,character,could,yes,no,
+Mocap stick-figure puppet (BVH to 2D clips),character,could,yes,no,needs own converter; CMU data from source
+Start from a reference video (pacing hook structure),intake,could,yes,no,we have a watch skill
+Thin Painter interface for a second renderer later,architecture,could,yes,no,customer brief items 1-2 without the ceremony
+Many-provider registry and scored selector,architecture,could,yes,skip,one renderer today; revisit when there are two
+OpenMontage code assets prompts and skill texts,licence,could,yes,skip,AGPL-3.0 — ideas only
+60+ provider integrations and paid generators,providers,could,yes,skip,their catalogue; Inkframe is painted by code
+Remotion and HyperFrames runtimes,runtime,could,yes,skip,own p5.brush renderer
+Other pipelines (talking head podcast dubbing documentary),pipelines,could,yes,skip,other products
+Web research 15-25 searches before the script,research,could,yes,skip,not needed for kids/business explainers now

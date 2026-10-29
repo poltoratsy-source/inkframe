@@ -1,0 +1,11 @@
+/* Inkframe 3: new roles added to the existing @theme in app/globals.css (generated from replica/design/tokens.json).
+   Existing names (ink-*, mist-*, pen*, ok*, voice, music) stay as they are; components use the role names below. */
+@theme {
+  --color-mist-450: #77728a;      /* border-input: 4.0:1 on bg, 3.5:1 on surface (mist-500 was below 3:1) */
+  --color-warn: #f5c84c;
+  --color-warn-bg: #4a3b12;
+  --color-danger: #ff7a7a;
+  --color-danger-bg: #4d1f24;
+  --color-gate: #ffb27d;
+  --color-gate-bg: #3a2616;
+}

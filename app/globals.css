@@ -25,6 +25,14 @@
   --color-voice: #7f78c8;
   --color-music: #4f8f7a;
   --font-sans: Inter, 'DejaVu Sans', system-ui, sans-serif;
+  /* Inkframe 3 roles (replica/design/tokens.json): input borders, review and gate states */
+  --color-mist-450: #77728a;
+  --color-warn: #f5c84c;
+  --color-warn-bg: #4a3b12;
+  --color-danger: #ff7a7a;
+  --color-danger-bg: #4d1f24;
+  --color-gate: #ffb27d;
+  --color-gate-bg: #3a2616;
 }
 
 html, body { background: var(--color-ink-900); color: var(--color-mist-100); }

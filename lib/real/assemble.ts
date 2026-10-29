@@ -25,13 +25,16 @@ export interface Cue { start: number; end: number; text: string }
 /** Words with the line's own punctuation, grouped into cues of at most `max` characters. `at` = when the clip starts. */
 export function cuesFor(line: string, words: Word[], at: number, max = 40): Cue[] {
   if (!words.length) return [];
+  // the line's own words (with their punctuation and quotes) take the timings of the voiced words, in order
   const tokens: { t0: number; t1: number; s: string }[] = [];
-  let cur = 0;
-  const pos = words.map(([, , w]) => { const k = line.indexOf(w, cur); if (k >= 0) cur = k + w.length; return k; });
-  words.forEach(([t0, t1, w], i) => {
-    const k = pos[i], next = pos.slice(i + 1).find(p => p >= 0) ?? line.length;
-    tokens.push({ t0, t1, s: k >= 0 ? line.slice(k, next).trim() : w });
-  });
+  let wi = 0;
+  for (const chunk of line.split(/\s+/).filter(Boolean)) {
+    const last = tokens[tokens.length - 1];
+    if (/[\p{L}\p{N}]/u.test(chunk) || !last) {
+      const [t0, t1] = words[Math.min(wi++, words.length - 1)];
+      tokens.push({ t0, t1, s: chunk });
+    } else last.s += ' ' + chunk;   // a dash or a lone mark stays with the word before it
+  }
   const cues: Cue[] = []; let group: typeof tokens = [];
   const flush = () => { if (group.length) cues.push({ start: at + group[0].t0 - .05, end: at + group[group.length - 1].t1 + .35, text: group.map(g => g.s).join(' ') }); group = []; };
   for (const tk of tokens) {

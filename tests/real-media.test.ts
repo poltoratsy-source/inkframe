@@ -36,6 +36,8 @@ test('subtitle cues keep the line\'s punctuation, stay short and follow the voic
   assert.equal(cues.map(c => c.text).join(' '), line);
   assert.ok(cues.every(c => c.text.length <= 26));
   assert.ok(cues.every((c, i) => c.start >= 9.9 && c.end > c.start && (i === 0 || c.start >= cues[i - 1].end)));
+  const quoted = cuesFor('Напиши слово «НЕБО» — вот и всё!', [[0, .3, 'Напиши'], [.4, .6, 'слово'], [.7, 1, 'НЕБО'], [1.1, 1.3, 'вот'], [1.4, 1.5, 'и'], [1.6, 1.8, 'всё']], 0);
+  assert.equal(quoted.map(c => c.text).join(' '), 'Напиши слово «НЕБО» — вот и всё!');
 });
 
 test('the cut: one cross-fade per seam at the scene starts, sound and subtitles mapped', () => {

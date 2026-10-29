@@ -69,3 +69,16 @@ test('a scene keeps its colour frames for playback and forgets them when redrawn
   s = applyEvent(s, { type: 'scene.status', n: 1, status: 'sketch' });
   assert.deepEqual(s.scenes[0].colors, []);
 });
+
+test('scene.board changes one scene\'s words and timing; an empty video takes the MP4 away', () => {
+  let s = applyEvent(base(), board);
+  s = applyEvent(s, { type: 'scene.board', n: 2, patch: { line: 'новая', caption: 'надпись', duration: 6.5 } });
+  assert.equal(s.scenes[1].line, 'новая');
+  assert.equal(s.scenes[1].caption, 'надпись');
+  assert.equal(s.scenes[1].duration, 6.5);
+  assert.equal(s.scenes[0].line, 'l');
+  s = applyEvent(s, { type: 'video', src: '/x.mp4' });
+  assert.equal(s.video, '/x.mp4');
+  s = applyEvent(s, { type: 'video', src: '' });
+  assert.equal(s.video, undefined);
+});

@@ -7,6 +7,10 @@ const basePath = process.env.NEXT_PUBLIC_BASE_PATH || '';
 
 const nextConfig: NextConfig = {
   poweredByHeader: false,
+  // a second studio can run next to the first one (e.g. demo and real) with its own build folder
+  ...(process.env.INKFRAME_DIST_DIR && { distDir: process.env.INKFRAME_DIST_DIR }),
+  // the real engine drives headless Chrome; keep puppeteer out of the server bundle
+  serverExternalPackages: ['puppeteer-core'],
   // No floating Next.js dev badge: the demo is screen-recorded and shown as is.
   devIndicators: false,
   ...(staticSite && {

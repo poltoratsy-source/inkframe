@@ -1,6 +1,6 @@
 // The contract between the studio screens and whatever draws the cartoon.
-// Stage 1 ships DemoEngine (pre-rendered frames on a timer); stage 2 adds RealEngine (Claude Agent SDK +
-// the painted renderer). Both emit the same EngineEvents, so the screens never need to know which one runs.
+// DemoEngine plays pre-rendered frames on a timer; RealEngine (lib/engine/real.ts) has Claude write the storyboard
+// and paints it with the painted renderer. Both emit the same EngineEvents, so the screens never need to know which one runs.
 
 export type StyleId = 'watercolor' | 'kinetic' | 'reels' | 'promo' | 'science' | 'board' | 'clip';
 
@@ -26,7 +26,9 @@ export type FrameKind = 'sketch' | 'color';
 /** How an edit changed a scene in the demo: a CSS filter and a zoom. The real engine redraws instead. */
 export interface Look { filter: string; zoom: number }
 
-export interface SceneBoard { n: number; title: string; visual: string; line: string; start: number; duration: number }
+export interface SceneBoard { n: number; title: string; visual: string; line: string; start: number; duration: number; caption?: string }
+/** A direct change to a scene's words, made in the edit panel (the real engine redraws only that scene). */
+export interface ScenePatch { line?: string; caption?: string }
 export interface Scene extends SceneBoard {
   status: SceneStatus;
   frame?: string;
@@ -71,8 +73,10 @@ export type EngineEvent =
   | ({ type: 'frame' } & CurrentFrame)
   | { type: 'scene.look'; n: number; look: Look }
   | { type: 'scene.edited'; n: number; request: string }
+  | { type: 'scene.board'; n: number; patch: Partial<Omit<SceneBoard, 'n'>> }
   | { type: 'progress'; value: number; etaSec: number }
   | { type: 'track'; kind: 'voice' | 'music'; peaks: number[] }
+  /** an empty src takes the video away (a scene changed after the cut) */
   | { type: 'video'; src: string }
   | { type: 'status'; status: ProjectStatus };
 
@@ -87,8 +91,8 @@ export interface StudioEngine {
   list(): ProjectSummary[];
   /** The listener first receives a `snapshot`, then every event. Returns an unsubscribe function. */
   subscribe(id: string, listener: (ev: EngineEvent) => void): () => void;
-  /** Redraw one scene from a text request; other scenes stay as they are. */
-  editScene(id: string, n: number, request: string): void;
+  /** Redraw one scene from a text request (and/or new words); other scenes stay as they are. */
+  editScene(id: string, n: number, request: string, patch?: ScenePatch): void;
   /** Glue the finished scenes and sound into an MP4. */
   build(id: string): void;
 }

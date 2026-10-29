@@ -39,10 +39,11 @@ export function applyEvent(s: ProjectState, ev: EngineEvent): ProjectState {
       };
     }
     case 'scene.look': return scene(ev.n, sc => ({ ...sc, look: ev.look }));
+    case 'scene.board': return scene(ev.n, sc => ({ ...sc, ...ev.patch }));
     case 'scene.edited': return scene(ev.n, sc => ({ ...sc, edited: true, version: sc.version + 1, edits: [...sc.edits, ev.request] }));
     case 'progress': return { ...s, progress: ev.value, etaSec: ev.etaSec };
     case 'track': return { ...s, tracks: { ...s.tracks, [ev.kind]: ev.peaks } };
-    case 'video': return { ...s, video: ev.src };
+    case 'video': return { ...s, video: ev.src || undefined };
     case 'status': return { ...s, status: ev.status };
   }
 }

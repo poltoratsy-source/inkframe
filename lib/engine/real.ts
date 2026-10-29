@@ -1,22 +1,441 @@
-// RealEngine: the place where stage 2 plugs in. It will
-//   1. ask Claude (Claude Agent SDK) for a storyboard.json from the idea and settings;
-//   2. voice every line with edge-tts and fit scene lengths to the voice;
-//   3. have Claude write one painted scene per storyboard entry (p5.js + p5.brush, see
-//      github.com/JohnHeibel/ClaudeAnimationBase), render a pencil draft at low resolution, then the colour pass,
-//      streaming every frame as a `frame` event;
-//   4. redraw a single scene on editScene();
-//   5. glue scenes, voice and music with ffmpeg on build().
-// It emits exactly the events DemoEngine emits, so the screens stay as they are.
-import type { EngineEvent, ProjectState, ProjectSummary, StartSettings, StudioEngine } from './types';
+// RealEngine: writes and paints the cartoon for real.
+//   1. Claude (Claude Code CLI on this machine) writes the storyboard: scenes, lines, lengths and a SceneSpec per scene
+//      (a template + setting + props + words, never free drawing code). If Claude can't be reached, a template
+//      storyboard is used and the log says so.
+//   2. edge-tts voices every line; scene lengths stretch to fit the voice.
+//   3. Every scene is drafted on screen: a pencil sketch, then a low-res colour pass, streamed frame by frame.
+//   4. editScene() changes one scene (by Claude, by simple rules, or by new words typed in) and redraws only it.
+//   5. build() paints every scene at 1280×720 / 12 fps (scenes that didn't change come from the cache), then ffmpeg
+//      cuts them together with cross-fades, the voice over a ducked music bed and burned-in subtitles.
+// It emits the same events as DemoEngine, so the screens stay as they are. Projects live in INKFRAME_PROJECTS_DIR.
+import { createHash, randomUUID } from 'node:crypto';
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
+import { applyEvent, canBuild, emptyProject } from './reducer';
+import type { EngineEvent, LogStep, ProjectState, ProjectSummary, ScenePatch, StartSettings, StepStatus, StudioEngine } from './types';
+import { MUSIC_NAMES, VOICE_NAMES } from '../options';
+import { askClaude } from '../real/claude';
+import { Painter, type FrameOptions } from '../real/painter';
+import { SR, decode, envelope, mixDown, music, peaks, place, tts, voiceId, wordsOf, writeWav, type TtsJob, type Word } from '../real/audio';
+import { FINAL_FPS, OVERLAP, cuesFor, cutArgs, ffmpeg, writeAss } from '../real/assemble';
+import { cleanScene, cleanStoryboard, editByRules, editPrompt, extractJson, storyboardPrompt, templateStoryboard, type BoardScene, type Storyboard } from '../real/storyboard';
+import { cleanSpec, describe, words, type StageScene } from '../real/scene-spec';
 
-const notYet = () => new Error('The real engine arrives in stage 2. Run with INKFRAME_ENGINE=demo for now.');
+/** What the engine needs from the outside world; tests swap these for fakes. */
+export interface RealTools {
+  ask(prompt: string): Promise<string>;
+  voice(jobs: TtsJob[], jobsFile: string): Promise<void>;
+  decode(file: string): Promise<Float32Array>;
+  painter: Pick<Painter, 'frames' | 'close' | 'workers'>;
+  ffmpeg(args: string[], cwd?: string): Promise<void>;
+}
+export interface RealOptions {
+  dir?: string;
+  tools?: Partial<RealTools>;
+  /** false = never ask Claude (template storyboard, rule-based edits) */
+  useClaude?: boolean;
+  draftFps?: number;
+  sketchFrames?: number;
+  finalWidth?: number;
+}
+
+const LEAD = .35, TAIL = .55;   // silence before and after each line inside its scene
+const DRAFT: FrameOptions = { rs: .25, width: 640, quality: .82 };
+const round1 = (x: number) => Math.round(x * 10) / 10;
+
+interface RScene { board: BoardScene; planned: number; version: number; voiceOther?: boolean; audio?: { base: string; dur: number; words: Word[] }; env: string }
+interface Entry {
+  state: ProjectState; listeners: Set<(ev: EngineEvent) => void>; queue: (() => Promise<void>)[]; running: boolean;
+  scenes: RScene[]; dir: string; cut: number; cutQueued?: boolean; storyBy?: Storyboard['by'];
+}
 
 export class RealEngine implements StudioEngine {
   readonly mode = 'real' as const;
-  create(_settings: StartSettings): ProjectState { throw notYet(); }
-  get(_id: string): ProjectState | undefined { return undefined; }
-  list(): ProjectSummary[] { return []; }
-  subscribe(_id: string, _listener: (ev: EngineEvent) => void): () => void { throw notYet(); }
-  editScene(_id: string, _n: number, _request: string): void { throw notYet(); }
-  build(_id: string): void { throw notYet(); }
+  private projects = new Map<string, Entry>();
+  private root: string;
+  private tools: RealTools;
+  private useClaude: boolean;
+  private draftFps: number;
+  private sketchFrames: number;
+  private finalWidth: number;
+  /** after Claude fails to answer, skip it for a while instead of making every step wait for the timeout */
+  private claudeDownUntil = 0;
+
+  constructor(o: RealOptions = {}) {
+    this.root = resolve(o.dir ?? process.env.INKFRAME_PROJECTS_DIR ?? 'projects');
+    this.useClaude = o.useClaude ?? process.env.INKFRAME_STORYBOARD !== 'template';
+    this.draftFps = o.draftFps ?? 6;
+    this.sketchFrames = o.sketchFrames ?? 5;
+    this.finalWidth = o.finalWidth ?? 1280;
+    this.tools = {
+      ask: p => askClaude(p), voice: tts, decode, ffmpeg,
+      painter: o.tools?.painter ?? new Painter({ workers: Number(process.env.INKFRAME_RENDER_WORKERS) || 3, log: s => console.warn(s) }),
+      ...o.tools,
+    } as RealTools;
+    mkdirSync(this.root, { recursive: true });
+    this.load();
+  }
+
+  // ---------- StudioEngine ----------
+  create(settings: StartSettings): ProjectState {
+    if (!settings.idea?.trim()) throw new Error('The idea is empty');
+    const id = randomUUID().slice(0, 8), dir = join(this.root, id);
+    mkdirSync(dir, { recursive: true });
+    const e: Entry = { state: emptyProject(id, settings, 'real'), listeners: new Set(), queue: [], running: false, scenes: [], dir, cut: 0 };
+    this.projects.set(id, e);
+    this.enqueue(e, () => this.run(e));
+    return e.state;
+  }
+
+  get(id: string) { return this.projects.get(id)?.state; }
+
+  list(): ProjectSummary[] {
+    return [...this.projects.values()].map(({ state: s }) => ({
+      id: s.id, title: s.title, status: s.status, duration: s.settings.duration, style: s.settings.style, createdAt: s.createdAt,
+      thumb: s.scenes.find(sc => sc.frameKind === 'color')?.frame ?? s.scenes[0]?.frame,
+    })).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
+
+  subscribe(id: string, listener: (ev: EngineEvent) => void) {
+    const e = this.entry(id);
+    listener({ type: 'snapshot', state: e.state });
+    e.listeners.add(listener);
+    return () => { e.listeners.delete(listener); };
+  }
+
+  editScene(id: string, n: number, request: string, patch?: ScenePatch) {
+    const e = this.entry(id);
+    const req = request.trim().slice(0, 300), hasPatch = !!(patch && (patch.line?.trim() || patch.caption !== undefined));
+    if (!req && !hasPatch) throw new Error('The edit request is empty');
+    if (e.state.scenes.length ? !e.state.scenes.some(sc => sc.n === n) : n < 1 || n > 12) throw new Error(`No scene ${n} in this project`);
+    this.enqueue(e, () => this.edit(e, n, req, hasPatch ? patch : undefined));
+  }
+
+  build(id: string) {
+    const e = this.entry(id);
+    if (!canBuild(e.state)) throw new Error('The cartoon is not ready to build yet');
+    if (e.cutQueued) return;   // a second click while the cut is on its way
+    e.cutQueued = true;
+    this.enqueue(e, () => this.cut(e).finally(() => { e.cutQueued = false; }));
+  }
+
+  // ---------- the run ----------
+  private async run(e: Entry) {
+    const s = e.state.settings;
+    this.emit(e, { type: 'status', status: 'drafting' });
+    this.step(e, 'read', 'Прочитал идею и настройки', 'ok');
+    this.step(e, 'script', 'Пишу сценарий и раскадровку', 'run', `«${e.state.title}»`);
+    const board = await this.storyboard(s);
+    e.storyBy = board.by;
+    e.scenes = board.scenes.map(b => ({ board: b, planned: b.duration, version: 1, env: '' }));
+    this.layout(e);
+    this.emit(e, { type: 'storyboard', title: board.title, scenes: e.scenes.map((r, i) => this.boardOf(e, i)) });
+    this.update(e, 'script', 'ok', `Написал сценарий: ${e.scenes.length} ${plural(e.scenes.length, 'сцена', 'сцены', 'сцен')}`,
+      board.by === 'claude' ? 'Claude' : 'Claude недоступен — раскадровка по шаблону');
+
+    if (s.voice !== 'none') await this.voiceAll(e);
+    for (const [i] of e.scenes.entries()) this.step(e, `scene-${i + 1}`, `Сцена ${i + 1} — в очереди`, 'wait');
+    if (s.music !== 'none') this.step(e, 'music', 'Музыка и сведение звука', 'wait');
+
+    const units = e.scenes.reduce((a, r) => a + this.draftTimes(r.board.duration).length + this.sketchFrames, 0);
+    const t0 = Date.now(); let done = 0;
+    for (const [i] of e.scenes.entries()) {
+      await this.draw(e, i, () => {
+        done++;
+        const left = (Date.now() - t0) / done * (units - done) / 1000;
+        this.emit(e, { type: 'progress', value: +(done / units * .96).toFixed(3), etaSec: Math.round(left + 2) });
+      });
+      this.update(e, `scene-${i + 1}`, 'ok', `Сцена ${i + 1} готова начерно`, '');
+    }
+    if (s.music !== 'none') {
+      this.update(e, 'music', 'run', `Подбираю музыку · ${MUSIC_NAMES[s.music]}, свожу с голосом`);
+      this.emit(e, { type: 'track', kind: 'music', peaks: peaks(music(this.total(e), s.music === 'calm' ? 'calm' : 'upbeat')) });
+      this.update(e, 'music', 'ok', `Музыка · ${MUSIC_NAMES[s.music]}, приглушена под голос`);
+    }
+    this.emit(e, { type: 'progress', value: 1, etaSec: 0 });
+    this.step(e, 'ready', 'Все сцены готовы начерно — можно собирать MP4', 'ok', `Ролик: ${fmtSec(this.total(e))}`);
+    this.emit(e, { type: 'status', status: 'ready' });
+  }
+
+  private async storyboard(s: StartSettings): Promise<Storyboard> {
+    const reply = await this.claude(storyboardPrompt(s));
+    if (reply) {
+      try { return cleanStoryboard(extractJson(reply), s); }
+      catch (err) { console.warn(`[inkframe] Claude's storyboard was unusable: ${(err as Error).message}`); }
+    }
+    return templateStoryboard(s);
+  }
+
+  /** Claude's reply, or undefined when Claude is switched off or can't be reached (then it rests for 10 minutes). */
+  private async claude(prompt: string): Promise<string | undefined> {
+    if (!this.useClaude || Date.now() < this.claudeDownUntil) return undefined;
+    try { return await this.tools.ask(prompt); }
+    catch (err) {
+      console.warn(`[inkframe] Claude unavailable, using templates: ${(err as Error).message}`);
+      this.claudeDownUntil = Date.now() + 10 * 60 * 1000;
+      return undefined;
+    }
+  }
+
+  // ---------- voice ----------
+  private async voiceAll(e: Entry, only?: number[]) {
+    const s = e.state.settings, idx = only ?? e.scenes.map((_, i) => i);
+    const id = only ? `voice-${Date.now()}` : 'voice';
+    this.step(e, id, `Озвучиваю ${only ? 'реплику' : 'реплики'} · голос «${VOICE_NAMES[s.voice]}»`, 'run');
+    mkdirSync(join(e.dir, 'voice'), { recursive: true });
+    const jobs: TtsJob[] = idx.map(i => {
+      const r = e.scenes[i], base = join(e.dir, 'voice', `s${i + 1}-${hash(r.board.line + r.voiceOther).slice(0, 8)}`);
+      return { text: r.board.line, voice: voiceId(s.language, s.voice, r.voiceOther), rate: r.board.spec.pace === 'slow' ? '-5%' : '+5%', out: base };
+    });
+    try {
+      await this.tools.voice(jobs.filter(j => !existsSync(j.out + '.mp3')), join(e.dir, 'voice', 'jobs.json'));
+      for (const [k, i] of idx.entries()) {
+        const pcm = await this.tools.decode(jobs[k].out + '.mp3'), ws = wordsOf(jobs[k].out);
+        // edge-tts pads the end with silence: the line lasts until its last word
+        const spoken = ws.length ? Math.min(pcm.length / SR, ws[ws.length - 1][1] + .15) : pcm.length / SR;
+        e.scenes[i].audio = { base: jobs[k].out, dur: spoken, words: ws };
+      }
+      this.layout(e);
+      await this.refreshVoice(e);
+      this.update(e, id, 'ok', `Озвучил${only ? ' заново' : ''} · голос «${VOICE_NAMES[s.voice]}»`, `Ролик: ${fmtSec(this.total(e))}`);
+    } catch (err) {
+      this.update(e, id, 'err', 'Озвучка не удалась — продолжаю без голоса', (err as Error).message.slice(0, 160));
+    }
+  }
+
+  /** Scene lengths: the storyboard's, stretched to fit each voiced line. */
+  private layout(e: Entry) {
+    for (const r of e.scenes) r.board.duration = r.audio ? Math.max(r.planned, round1(r.audio.dur + LEAD + TAIL)) : r.planned;
+  }
+  private starts(e: Entry) { let t = 0; return e.scenes.map(r => { const a = t; t = round1(t + r.board.duration); return a; }); }
+  private total(e: Entry) { return round1(e.scenes.reduce((a, r) => a + r.board.duration, 0)); }
+
+  /** Rebuilds the voice track (peaks for the studio) and every scene's mouth envelope; tells the studio new timings. */
+  private async refreshVoice(e: Entry) {
+    const starts = this.starts(e), clips: { at: number; pcm: Float32Array }[] = [];
+    for (const [i, r] of e.scenes.entries()) {
+      if (!r.audio) { r.env = ''; continue; }
+      const pcm = await this.tools.decode(r.audio.base + '.mp3');
+      r.env = envelope(pcm, LEAD, r.board.duration + OVERLAP);
+      clips.push({ at: starts[i] + LEAD, pcm });
+    }
+    for (const [i, r] of e.scenes.entries()) {
+      const sc = e.state.scenes[i];
+      if (sc && (sc.start !== starts[i] || sc.duration !== r.board.duration)) this.emit(e, { type: 'scene.board', n: i + 1, patch: { start: starts[i], duration: r.board.duration } });
+    }
+    if (clips.length) this.emit(e, { type: 'track', kind: 'voice', peaks: peaks(place(this.total(e), clips)) });
+  }
+
+  // ---------- drawing ----------
+  private draftTimes(dur: number) { const n = Math.max(2, Math.round(dur * this.draftFps)); return Array.from({ length: n }, (_, k) => round3(k / this.draftFps)); }
+  private stage(r: RScene, extra: Partial<StageScene> = {}): StageScene { return { ...r.board.spec, duration: r.board.duration, voice: r.env, ...extra }; }
+
+  /** Sketch, then the colour draft, streamed to the studio. */
+  private async draw(e: Entry, i: number, tick: () => void) {
+    const r = e.scenes[i], n = i + 1, dur = r.board.duration, total = Math.round(dur * FINAL_FPS);
+    const rel = `frames/s${n}-v${r.version}`, dir = join(e.dir, rel);
+    rmSync(dir, { recursive: true, force: true }); mkdirSync(dir, { recursive: true });
+    const url = (f: string) => `/api/projects/${e.state.id}/files/${rel}/${f}`;
+    this.update(e, `scene-${n}`, 'run', `Рисую сцену ${n}: набросок`, `«${r.board.title}»`);
+    this.emit(e, { type: 'scene.status', n, status: 'sketch' });
+    const sk = Array.from({ length: this.sketchFrames }, (_, k) => round3((k + .5) / this.sketchFrames * dur));
+    await this.tools.painter.frames(this.stage(r, { sketch: true }), sk, DRAFT, (k, jpg) => {
+      const f = `sketch-${k}.jpg`; writeFileSync(join(dir, f), jpg); tick();
+      this.emit(e, { type: 'frame', n, kind: 'sketch', src: url(f), index: Math.round(sk[k] * FINAL_FPS), total });
+    });
+    this.update(e, `scene-${n}`, 'run', `Рисую сцену ${n} в цвете`);
+    this.emit(e, { type: 'scene.status', n, status: 'painting' });
+    const ct = this.draftTimes(dur);
+    await this.tools.painter.frames(this.stage(r, { fast: true }), ct, DRAFT, (k, jpg) => {
+      const f = `color-${String(k).padStart(3, '0')}.jpg`; writeFileSync(join(dir, f), jpg); tick();
+      this.emit(e, { type: 'frame', n, kind: 'color', src: url(f), index: Math.round(ct[k] * FINAL_FPS), total });
+    });
+    this.emit(e, { type: 'scene.status', n, status: 'done' });
+    // older drafts of this scene are no longer shown anywhere
+    for (const d of readdirSync(join(e.dir, 'frames'))) if (d.startsWith(`s${n}-v`) && d !== `s${n}-v${r.version}`) rmSync(join(e.dir, 'frames', d), { recursive: true, force: true });
+  }
+
+  // ---------- edits ----------
+  private async edit(e: Entry, n: number, request: string, patch?: ScenePatch) {
+    const i = n - 1, r = e.scenes[i], s = e.state.settings;
+    if (!r) throw new Error(`No scene ${n} in this project`);
+    const what = request || [patch?.line && 'новая реплика', patch?.caption !== undefined && 'новая подпись'].filter(Boolean).join(', ');
+    const id = `edit-${n}-${Date.now()}`;
+    this.step(e, id, `Правлю сцену ${n}: «${what}»`, 'run', 'Остальные сцены не трогаю');
+    let next: BoardScene = { ...r.board, spec: { ...r.board.spec } }, voiceOther = r.voiceOther, how = '';
+    if (patch) {
+      if (patch.line?.trim()) next.line = words(patch.line, 220)!;
+      if (patch.caption !== undefined) {
+        const c = words(patch.caption, next.spec.template === 'card' ? 24 : 42);
+        if (next.spec.template === 'card') next.spec.title = c ?? next.spec.title; else next.spec.caption = c;
+      }
+      how = 'новые слова';
+    }
+    if (request) {
+      let byClaude = false;
+      const reply = await this.claude(editPrompt(s, next, request));
+      if (reply) {
+        try {
+          const got = cleanScene(extractJson(reply), next.duration, s);
+          if (got) { next = { ...got, duration: next.duration }; byClaude = true; how = 'Claude'; }
+        } catch (err) { console.warn(`[inkframe] Claude's edit was unusable: ${(err as Error).message}`); }
+      }
+      if (/голос|voice/i.test(request)) voiceOther = !voiceOther;
+      if (!byClaude) {
+        const ruled = editByRules(next, request);
+        if (!ruled.understood && !patch) {
+          this.update(e, id, 'err', `Не понял правку сцены ${n} без Claude`, 'Напишите «реплика: …» или «подпись: …», или «ночь», «крупнее герой», «медленнее», «веселее», «другой голос»');
+          return;
+        }
+        next = ruled.scene; how = how || 'по правилам';
+      }
+    }
+    next.spec = cleanSpec(next.spec);
+    if (s.hero === 'none') next.spec.hero = false;
+    const revoice = next.line !== r.board.line || voiceOther !== r.voiceOther || next.spec.pace !== r.board.spec.pace;
+    r.board = next;
+    r.voiceOther = voiceOther;
+    this.emit(e, { type: 'scene.board', n, patch: this.boardPatch(e, i) });
+    if (revoice && s.voice !== 'none') await this.voiceAll(e, [i]);   // the scene keeps its storyboard length or stretches to the new voice
+    if (e.state.video) { this.emit(e, { type: 'video', src: '' }); this.emit(e, { type: 'status', status: 'ready' }); }
+    this.update(e, id, 'run', `Перерисовываю сцену ${n}`);
+    r.version++;
+    await this.draw(e, i, () => {});
+    this.emit(e, { type: 'scene.edited', n, request: what });
+    this.update(e, id, 'ok', `Сцена ${n} перерисована: «${what}»`, how === 'Claude' ? 'Правку понял Claude' : how === 'по правилам' ? 'Claude недоступен — правка по правилам' : '');
+  }
+
+  private boardOf(e: Entry, i: number) { return { n: i + 1, ...this.boardPatch(e, i) }; }
+  private boardPatch(e: Entry, i: number) {
+    const b = e.scenes[i].board, starts = this.starts(e);
+    return { title: b.title, line: b.line, visual: describe(b.spec, e.state.settings.language), caption: b.spec.template === 'card' ? b.spec.title : b.spec.caption ?? '', start: starts[i], duration: b.duration };
+  }
+
+  // ---------- the cut ----------
+  private async cut(e: Entry) {
+    const s = e.state.settings, id = `build-${++e.cut}`, starts = this.starts(e), total = this.total(e);
+    this.emit(e, { type: 'status', status: 'building' });
+    this.step(e, id, 'Рисую сцены начисто и склеиваю MP4', 'run', '0 %');
+    try {
+      mkdirSync(join(e.dir, 'clips'), { recursive: true });
+      const w = this.finalWidth, opts: FrameOptions = { rs: Number(process.env.INKFRAME_FINAL_RS) || .5, width: w, quality: .9 };
+      const jobs = e.scenes.map((r, i) => {
+        const len = r.board.duration + (i < e.scenes.length - 1 ? OVERLAP : 0), stage = this.stage(r, { fast: process.env.INKFRAME_WATERCOLOR !== '1' });
+        const key = hash(JSON.stringify([stage, len, w])).slice(0, 12);
+        return { i, len, stage, clip: `clips/s${i + 1}-${key}.mp4`, frames: Math.round(len * FINAL_FPS) };
+      });
+      const todo = jobs.filter(j => !existsSync(join(e.dir, j.clip))), all = todo.reduce((a, j) => a + j.frames, 0) || 1;
+      let done = 0;
+      for (const j of todo) {
+        const tmp = join(e.dir, 'tmp', `s${j.i + 1}`);
+        rmSync(tmp, { recursive: true, force: true }); mkdirSync(tmp, { recursive: true });
+        this.update(e, id, 'run', `Рисую начисто сцену ${j.i + 1} из ${jobs.length}`);
+        const times = Array.from({ length: j.frames }, (_, k) => round3(k / FINAL_FPS));
+        await this.tools.painter.frames(j.stage, times, opts, (k, jpg) => {
+          writeFileSync(join(tmp, `f${String(k).padStart(5, '0')}.jpg`), jpg);
+          if (++done % 6 === 0) this.update(e, id, 'run', undefined, `${Math.round(done / all * 85)} %`);
+        });
+        await this.tools.ffmpeg(['-framerate', String(FINAL_FPS), '-i', join(tmp, 'f%05d.jpg'), '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '19', '-pix_fmt', 'yuv420p', join(e.dir, j.clip)]);
+        rmSync(tmp, { recursive: true, force: true });
+      }
+      this.update(e, id, 'run', 'Свожу голос, музыку и субтитры', '88 %');
+      // sound: the voice on its timeline, the music bed ducked under it
+      const clips: { at: number; pcm: Float32Array }[] = [];
+      for (const [i, r] of e.scenes.entries()) if (r.audio) clips.push({ at: starts[i] + LEAD, pcm: await this.tools.decode(r.audio.base + '.mp3') });
+      const voice = place(total, clips), bed = s.music !== 'none' ? music(total, s.music === 'calm' ? 'calm' : 'upbeat') : undefined;
+      const hasSound = clips.length > 0 || !!bed;
+      if (hasSound) writeWav(join(e.dir, 'sound.wav'), mixDown(voice, bed));
+      const cues = e.scenes.flatMap((r, i) => (r.audio ? cuesFor(r.board.line, r.audio.words, starts[i] + LEAD) : []));
+      if (cues.length) writeAss(join(e.dir, 'subtitles.ass'), cues);
+      const out = `cut-${e.cut}.mp4`;
+      await this.tools.ffmpeg(cutArgs({ clips: jobs.map(j => j.clip), starts, total, audio: hasSound ? 'sound.wav' : undefined, ass: cues.length ? 'subtitles.ass' : undefined, out }), e.dir);
+      for (const f of readdirSync(e.dir)) if (/^cut-\d+\.mp4$/.test(f) && f !== out) rmSync(join(e.dir, f), { force: true });
+      const used = new Set(jobs.map(j => j.clip.slice(6)));
+      for (const f of readdirSync(join(e.dir, 'clips'))) if (!used.has(f)) rmSync(join(e.dir, 'clips', f), { force: true });
+      rmSync(join(e.dir, 'tmp'), { recursive: true, force: true });
+      this.emit(e, { type: 'video', src: `/api/projects/${e.state.id}/files/${out}` });
+      this.update(e, id, 'ok', 'MP4 готов — можно скачать', `${fmtSec(total)} · ${w}×${Math.round(w * 9 / 16)} · ${[clips.length && 'голос', bed && 'музыка', cues.length && 'субтитры'].filter(Boolean).join(', ') || 'без звука'}${todo.length < jobs.length ? ` · перерисовано сцен: ${todo.length} из ${jobs.length}` : ''}`);
+      this.emit(e, { type: 'status', status: 'done' });
+    } catch (err) {
+      rmSync(join(e.dir, 'tmp'), { recursive: true, force: true });
+      this.update(e, id, 'err', 'MP4 не собрался', (err as Error).message.slice(0, 200));
+      this.emit(e, { type: 'status', status: 'ready' });
+    }
+  }
+
+  // ---------- plumbing ----------
+  private entry(id: string) {
+    const e = this.projects.get(id);
+    if (!e) throw new Error(`Project ${id} not found`);
+    return e;
+  }
+
+  private enqueue(e: Entry, task: () => Promise<void>) {
+    e.queue.push(task);
+    if (!e.running) void this.next(e);
+  }
+
+  private async next(e: Entry) {
+    const task = e.queue.shift();
+    if (!task) { e.running = false; return; }
+    e.running = true;
+    try { await task(); }
+    catch (err) {
+      console.error('[inkframe]', err);
+      this.step(e, `err-${Date.now()}`, 'Что-то пошло не так', 'err', (err as Error).message.slice(0, 200));
+      if (canBuild({ ...e.state, status: 'ready' })) this.emit(e, { type: 'status', status: 'ready' });
+    }
+    this.save(e);
+    void this.next(e);
+  }
+
+  private step(e: Entry, id: string, text: string, status: StepStatus, detail?: string) {
+    const step: LogStep = { id, text, status, ...(detail !== undefined && { detail }) };
+    this.emit(e, { type: 'log.add', step });
+  }
+  private update(e: Entry, id: string, status: StepStatus, text?: string, detail?: string) {
+    this.emit(e, { type: 'log.update', id, status, ...(text !== undefined && { text }), ...(detail !== undefined && { detail }) });
+  }
+
+  private emit(e: Entry, ev: EngineEvent) {
+    e.state = applyEvent(e.state, ev);
+    for (const l of e.listeners) { try { l(ev); } catch { /* a closed stream */ } }
+  }
+
+  /** The project folder for the file route. */
+  fileOf(id: string, rel: string): string | undefined {
+    const e = this.projects.get(id);
+    if (!e || !/^[\w./-]+$/.test(rel) || rel.includes('..')) return undefined;
+    const f = resolve(e.dir, rel);
+    return f.startsWith(e.dir + '/') && existsSync(f) ? f : undefined;
+  }
+
+  private save(e: Entry) {
+    try { writeFileSync(join(e.dir, 'project.json'), JSON.stringify({ state: e.state, scenes: e.scenes, cut: e.cut, storyBy: e.storyBy })); }
+    catch (err) { console.warn('[inkframe] could not save', e.state.id, (err as Error).message); }
+  }
+
+  private load() {
+    for (const id of readdirSync(this.root)) {
+      const f = join(this.root, id, 'project.json');
+      if (!existsSync(f)) continue;
+      try {
+        const j = JSON.parse(readFileSync(f, 'utf8'));
+        const e: Entry = { ...j, listeners: new Set(), queue: [], running: false, cutQueued: false, dir: join(this.root, id) };
+        if (['drafting', 'drawing', 'building'].includes(e.state.status)) {
+          e.state = applyEvent(e.state, { type: 'log.add', step: { id: 'restart', text: 'Работа прервалась: сервер перезапускали', status: 'err' } });
+          e.state = applyEvent(e.state, { type: 'status', status: canBuild({ ...e.state, status: 'ready' }) ? 'ready' : e.state.status === 'building' ? 'ready' : e.state.status });
+        }
+        this.projects.set(id, e);
+      } catch { /* not a project */ }
+    }
+  }
+}
+
+const hash = (s: string) => createHash('sha1').update(s).digest('hex');
+const round3 = (x: number) => Math.round(x * 1000) / 1000;
+const fmtSec = (s: number) => (s < 60 ? `${s.toFixed(1).replace('.', ',')} с` : `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, '0')}`);
+function plural(n: number, one: string, few: string, many: string) {
+  const m10 = n % 10, m100 = n % 100;
+  return m10 === 1 && m100 !== 11 ? one : m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14) ? few : many;
 }

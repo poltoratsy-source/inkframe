@@ -20,7 +20,7 @@ const skip = new Set(['node_modules', '.next', '.git', '.pages-build', 'out', 'o
 
 rmSync(work, { recursive: true, force: true });
 for (const name of readdirSync(root)) {   // entry by entry: cpSync refuses to copy a folder into itself
-  if (!skip.has(name)) cpSync(join(root, name), join(work, name), { recursive: true, filter: src => !skip.has(relative(root, src)) });
+  if (!skip.has(name) && !name.startsWith('.next')) cpSync(join(root, name), join(work, name), { recursive: true, filter: src => !skip.has(relative(root, src)) });
 }
 
 // No node_modules in the copy: Node and Next find the project's own one level up.

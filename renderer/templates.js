@@ -59,7 +59,7 @@ const SETTINGS = {
   sky(lt) {
     wall('#9CCBEA', 'sky');
     boilSeed('sky-hi'); paint(ellPts(W / 2, GROUND - 40, W * .9, 320, 30, 12), { wash: '#CFE6F3', washOp: 150, ink: null });
-    for (let i = 0; i < 2; i++) { const x = (hash(i * 4) * W + lt * (14 + 8 * i)) % (W + 400) - 200; boilSeed('skycl' + i); drawProp('cloud', x, 300 + i * 110, .55 - i * .12, lt, null); }
+    for (let i = 0; i < 2; i++) { const x = (hash(i * 4) * W + lt * (14 + 8 * i)) % (W + 400) - 200; boilSeed('skycl' + i); drawProp('cloud', x, 215 + i * 85, .5 - i * .12, lt, null); }
     hills(['#9DBF6A', '#7FAE5A'], 'hill');
   },
   meadow(lt) {
@@ -165,7 +165,7 @@ const TEMPLATES = {
     setting(s.setting, lt);
     const kL = backOut(seg(lt, .3, .9)), kR = backOut(seg(lt, d * .4, d * .4 + .6));
     for (const [side, P, k, x] of [['L', L, kL, 520], ['R', R, kR, 1400]]) {
-      drawProp(PROPS[P.prop] ? P.prop : 'question', x, 450, 1.3 * k, lt, P.color);
+      drawProp(PROPS[P.prop] ? P.prop : 'question', x, 470, 1.3 * k, lt, P.color);
     }
     const look = kf(lt, [[0, -.9], [d * .38, -.9], [d * .46, .9], [d * .8, .9], [d * .9, 0]]);
     host(lt, s, 960, hostU(s, 15), { lookX: look, pose: { flip: look < 0 } });

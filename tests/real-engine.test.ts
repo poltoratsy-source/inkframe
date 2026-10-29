@@ -11,6 +11,7 @@ import type { EngineEvent } from '../lib/engine/types.ts';
 import type { Checkpoint, LoggedEvent, Review } from '../lib/store/types.ts';
 import type { ReviewPlan } from '../lib/real/review.ts';
 import { canBuild } from '../lib/engine/reducer.ts';
+import { readSubtitles } from '../lib/store/stages.ts';
 import type { StageScene } from '../lib/real/scene-spec.ts';
 
 const settings = { ...DEFAULT_SETTINGS, idea: 'Почему небо голубое', duration: 15 };
@@ -72,7 +73,7 @@ const json = <T>(f: string): T => JSON.parse(readFileSync(f, 'utf8'));
 const journal = (dir: string): LoggedEvent[] => readFileSync(join(dir, 'events.jsonl'), 'utf8').trim().split('\n').map(l => JSON.parse(l));
 /** The gates of M1–M3: only the script stops; the storyboard and final gates are tested in gates-m4.test.ts. */
 const M1 = { script: true, storyboard: false, final: false };
-const engine = (f: ReturnType<typeof fakes>, more = {}) => new RealEngine({ dir: tmp(), tools: f.tools, draftFps: 2, sketchFrames: 2, gates: M1, ...more });
+const engine = (f: ReturnType<typeof fakes>, more = {}) => new RealEngine({ dir: tmp(), tools: f.tools, draftFps: 2, sketchFrames: 2, gates: M1, subtitles: true, ...more });
 
 test('a run: Claude storyboard, voice fits the scenes, sketch then colour drafts for every scene', async () => {
   const f = fakes(), e = engine(f);
@@ -387,4 +388,25 @@ test('the clip cache knows the renderer version: a new renderer paints every cli
   await built(b, p.id);
   assert.equal(clipsMade(f), 6, 'a changed renderer: all three painted again');
   assert.equal(readdirSync(join(dir, p.id, 'clips')).length, 3, 'the old clips are cleaned away');
+});
+
+test('subtitles off (the default for now): no .ass file, nothing burned in, the review says so', async () => {
+  const f = fakes(), e = engine(f, { subtitles: false });
+  const p = e.create(settings);
+  await ready(e, p.id);
+  e.build(p.id);
+  await until(e, p.id, ev => ev.type === 'status' && ev.status === 'done');
+  const cut = f.cuts[f.cuts.length - 1];
+  assert.ok(cut.includes('sound.wav'), 'the sound is still mixed in');
+  assert.ok(!cut.some(a => a.includes('ass=')), 'no subtitles burned in');
+  assert.ok(!e.get(p.id)!.log.some(l => /субтитры/.test(l.text) && l.status === 'run' && /Свожу/.test(l.text)), 'the log does not promise subtitles');
+});
+
+test('readSubtitles: off by default, inkframe.config.json or INKFRAME_SUBTITLES turn them on', () => {
+  const cwd = tmp();
+  assert.equal(readSubtitles(cwd, {}), false);
+  assert.equal(readSubtitles(cwd, { INKFRAME_SUBTITLES: 'on' }), true);
+  writeFileSync(join(cwd, 'inkframe.config.json'), JSON.stringify({ subtitles: true }));
+  assert.equal(readSubtitles(cwd, {}), true);
+  assert.equal(readSubtitles(cwd, { INKFRAME_SUBTITLES: 'off' }), false);
 });

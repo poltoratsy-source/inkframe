@@ -33,7 +33,7 @@ import { applyEvent, canBuild, emptyProject, normalizeProject } from './reducer'
 import { libraryOf } from './library';
 import { journalLine, replayFromJournal, spread, type Replay, type SceneFrames } from './replay';
 import type { ApproveOptions, EngineEvent, LogStep, ProjectState, ProjectSummary, ReviseOptions, ScenePatch, StageId, StageStatus, StartSettings, StepStatus, StudioEngine } from './types';
-import { StageStore, readBudget, readGatePolicy } from '../store/stages';
+import { StageStore, readBudget, readGatePolicy, readSubtitles } from '../store/stages';
 import { GateError } from '../store/gate';
 import { STAGE_NAMES, approvedWord, type Approval, type BudgetPolicy, type Checkpoint, type Decision, type Estimate, type GatePolicy, type Review, type SceneNote } from '../store/types';
 import { MUSIC_NAMES, OPTIONS, STYLES, VOICE_NAMES } from '../options';
@@ -71,6 +71,8 @@ export interface RealOptions {
   rendererVersion?: string;
   /** observe / warn / cap and the cap in seconds (default: inkframe.config.json + INKFRAME_BUDGET, see readBudget) */
   budget?: BudgetPolicy;
+  /** burn subtitles into the MP4 (default: off, see readSubtitles) */
+  subtitles?: boolean;
 }
 
 const LEAD = .35, TAIL = .55;   // silence before and after each line inside its scene
@@ -100,6 +102,7 @@ export class RealEngine implements StudioEngine {
   private finalWidth: number;
   private gates: GatePolicy;
   private budget: BudgetPolicy;
+  private subtitles: boolean;
   private speed: SpeedLog;
   private rendererVersion?: string;
   /** after Claude fails to answer, skip it for a while instead of making every step wait for the timeout */
@@ -113,6 +116,7 @@ export class RealEngine implements StudioEngine {
     this.finalWidth = o.finalWidth ?? 1280;
     this.gates = o.gates ?? readGatePolicy();
     this.budget = o.budget ?? readBudget();
+    this.subtitles = o.subtitles ?? readSubtitles();
     this.rendererVersion = o.rendererVersion;
     this.tools = {
       ask: p => askClaude(p), voice: tts, decode, ffmpeg, review: reviewVideo,
@@ -733,14 +737,14 @@ export class RealEngine implements StudioEngine {
         this.speed.record('encodePerFrame', (Date.now() - te) / 1000, times.length);
         rmSync(tmp, { recursive: true, force: true });
       }
-      this.update(e, id, 'run', 'Свожу голос, музыку и субтитры', '88 %');
+      this.update(e, id, 'run', this.subtitles ? 'Свожу голос, музыку и субтитры' : 'Свожу голос и музыку', '88 %');
       // sound: the voice on its timeline, the music bed ducked under it
       const clips: { at: number; pcm: Float32Array }[] = [];
       for (const [i, r] of e.scenes.entries()) if (r.audio) clips.push({ at: starts[i] + LEAD, pcm: await this.tools.decode(r.audio.base + '.mp3') });
       const voice = place(total, clips), bed = s.music !== 'none' ? music(total, s.music === 'calm' ? 'calm' : 'upbeat') : undefined;
       const hasSound = clips.length > 0 || !!bed;
       if (hasSound) writeWav(join(e.dir, 'sound.wav'), mixDown(voice, bed));
-      const cues = e.scenes.flatMap((r, i) => (r.audio ? cuesFor(r.board.line, r.audio.words, starts[i] + LEAD) : []));
+      const cues = this.subtitles ? e.scenes.flatMap((r, i) => (r.audio ? cuesFor(r.board.line, r.audio.words, starts[i] + LEAD) : [])) : [];
       if (cues.length) writeAss(join(e.dir, 'subtitles.ass'), cues, fmt);
       const out = `cut-${e.cut}.mp4`, src = `/api/projects/${e.state.id}/files/${out}`;
       await this.tools.ffmpeg(cutArgs({ clips: jobs.map(j => j.clip), starts, total, audio: hasSound ? 'sound.wav' : undefined, ass: cues.length ? 'subtitles.ass' : undefined, out }), e.dir);
@@ -763,6 +767,7 @@ export class RealEngine implements StudioEngine {
           ? [{ n: i + 1, start: round3(starts[i] + LEAD), end: round3(starts[i] + (r.audio ? LEAD + r.audio.dur : r.board.duration - TAIL)), voiced: !!r.audio }] : [])),
         voice: s.voice !== 'none', sound: hasSound,
         ...(cues.length && { subtitles: { file: join(e.dir, 'subtitles.ass'), burned: true } }),
+        ...(!this.subtitles && { subtitlesOff: true }),
       };
       let review: Review;
       try { review = await this.tools.review(plan); } catch (err) { review = reviewCrashed(src, err); }

@@ -127,6 +127,14 @@ export function readBudget(cwd = process.cwd(), env: Record<string, string | und
   return mode === 'observe' ? { mode, ...(capSec && { capSec }) } : { mode, capSec: capSec ?? DEFAULT_CAP_SEC };
 }
 
+/** Burned-in subtitles: off by default for now (Ru_ANGEL15, 29.10.2026 — to be reworked, see replica/build-log.md).
+ *  inkframe.config.json {"subtitles": true} or INKFRAME_SUBTITLES=on turns them back on. */
+export function readSubtitles(cwd = process.cwd(), env: Record<string, string | undefined> = process.env): boolean {
+  const v = (env.INKFRAME_SUBTITLES ?? "").trim().toLowerCase();
+  if (v) return ["1", "on", "true", "yes"].includes(v);
+  return readConfig(cwd).subtitles === true;
+}
+
 /** The gate policy of this install: inkframe.config.json {"gates": {"script": true, …}} in the working folder,
  *  then INKFRAME_GATES on top (off | on | a list such as "script,final"). */
 export function readGatePolicy(cwd = process.cwd(), env: Record<string, string | undefined> = process.env): GatePolicy {

@@ -33,6 +33,8 @@ export interface ReviewPlan {
   sound: boolean;
   /** the subtitle file and whether the cut burned it into the picture */
   subtitles?: { file: string; burned: boolean };
+  /** subtitles are switched off for this install: nothing to check */
+  subtitlesOff?: boolean;
 }
 
 export const LIMITS = {
@@ -272,7 +274,8 @@ export async function reviewVideo(plan: ReviewPlan): Promise<Review> {
   // subtitles
   {
     const voiced = plan.lines.filter(l => l.voiced);
-    if (!voiced.length) checks.push({ id: 'subtitles', ok: true, detail: 'озвученных реплик нет — субтитры не нужны' });
+    if (plan.subtitlesOff) checks.push({ id: 'subtitles', ok: true, detail: 'субтитры выключены в настройках — не проверял' });
+    else if (!voiced.length) checks.push({ id: 'subtitles', ok: true, detail: 'озвученных реплик нет — субтитры не нужны' });
     else if (!plan.subtitles) checks.push({ id: 'subtitles', ok: false, warn: true, detail: 'субтитров нет, хотя реплики озвучены' });
     else {
       const cues = assCues(plan.subtitles.file);

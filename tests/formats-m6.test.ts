@@ -173,7 +173,7 @@ async function film(e: RealEngine, format: Format) {
 
 test('engine: settings.format reaches every painter call, the draft and final sizes, the subtitles, the review and the decision log', async () => {
   for (const [format, draft, video] of [['9:16', 360, [720, 1280]], ['1:1', 360, [720, 720]], ['16:9', 640, [1280, 720]]] as const) {
-    const f = fakes(), e = new RealEngine({ dir: tmp(), tools: f.tools, draftFps: 2, sketchFrames: 2, gates: OFF, budget: { mode: 'observe' } });
+    const f = fakes(), e = new RealEngine({ dir: tmp(), tools: f.tools, draftFps: 2, sketchFrames: 2, gates: OFF, budget: { mode: 'observe' }, subtitles: true });
     const id = await film(e, format), dir = dirOf(e, id), s = e.get(id)!;
     assert.equal(s.format, format, 'the project says which format its frames are');
     assert.ok(f.painted.length > 0 && f.painted.every(x => x.scene.format === format), `${format}: every frame asks the stage for ${format}`);

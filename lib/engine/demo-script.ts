@@ -191,9 +191,17 @@ export function buildAssembleScript(_p: ProjectState, c: DemoCatalog, speed = 1)
   w.emit({ type: 'stage', stage: 'compose', status: 'in_progress', version: 1 });
   w.emit({ type: 'log.add', step: { id: 'build', text: 'Склеиваю сцены, голос и музыку в MP4', status: 'run', detail: '0 %' } });
   for (const pct of [18, 41, 67, 88, 100]) { w.wait(600); w.emit({ type: 'log.update', id: 'build', status: 'run', detail: `${pct} %` }); }
+  w.emit({ type: 'log.update', id: 'build', status: 'ok', text: 'MP4 склеен — проверяю, прежде чем отдать', detail: c.videoLabel });
+  w.emit({ type: 'stage', stage: 'compose', status: 'completed', version: 1 });
+  // the self-review, as the real engine does it after every cut; the demo MP4's report is known in advance
+  w.emit({ type: 'stage', stage: 'review', status: 'in_progress', version: 1 });
+  w.emit({ type: 'log.add', step: { id: 'review', text: 'Проверяю готовый ролик', status: 'run', detail: 'длина, чёрные и пустые кадры, голос под репликами, громкость, субтитры' } });
+  w.wait(900);
+  w.emit({ type: 'review', review: { at: new Date().toISOString(), video: c.video, decision: 'PASS', checks: c.review } });
+  w.emit({ type: 'log.update', id: 'review', status: 'ok', text: 'Проверил ролик: всё в порядке', detail: '' });
+  w.emit({ type: 'stage', stage: 'review', status: 'completed', version: 1 });
   w.emit({ type: 'video', src: c.video });
   w.emit({ type: 'log.update', id: 'build', status: 'ok', text: 'MP4 готов — можно скачать', detail: c.videoLabel });
-  w.emit({ type: 'stage', stage: 'compose', status: 'completed', version: 1 });
   w.emit({ type: 'status', status: 'done' });
   return w.out;
 }

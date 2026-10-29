@@ -54,7 +54,8 @@ export interface Review {
   decision: 'PASS' | 'WARN' | 'FAIL';
   checks: {
     id: 'probe' | 'duration' | 'black' | 'blank' | 'silence' | 'clipping' | 'subtitles' | 'slideshow';
-    ok: boolean; detail: string; at?: number[];     // seconds where it was found
+    ok: boolean; warn?: boolean;                     // not ok + warn = a remark (MP4 handed out); not ok alone = a fault
+    detail: string; at?: number[];                   // seconds where it was found
   }[];
 }
 

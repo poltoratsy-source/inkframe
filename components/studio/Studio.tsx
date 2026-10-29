@@ -27,7 +27,9 @@ export function Studio({ id }: { id: string }) {
   // Follow the scene being drawn until the user picks one.
   const drawing = p?.scenes.find(s => s.status === 'sketch' || s.status === 'painting')?.n;
   const selected = picked ?? drawing ?? p?.current?.n ?? 1;
-  useEffect(() => { if (p?.video && p.status === 'done') setShowVideo(true); }, [p?.video, p?.status]);
+  // a cut that failed its self-review is not handed out: no video, but the report opens so the user sees why
+  const failed = p?.review?.decision === 'FAIL' && !p.video;
+  useEffect(() => { if ((p?.video && p.status === 'done') || (failed && p?.status === 'ready')) setShowVideo(true); }, [p?.video, p?.status, p?.review?.at, failed]);
 
   if (missing) return (
     <div className="flex h-screen flex-col"><TopBar />
@@ -54,6 +56,11 @@ export function Studio({ id }: { id: string }) {
     <div className="grid h-screen min-h-[760px] grid-rows-[56px_40px_minmax(0,1fr)_auto] overflow-hidden">
       <TopBar middle={<div className="truncate text-mist-300">Проект: «{p.title}» · {len(p.settings.duration)} · {style}</div>}>
         <span className="rounded-full bg-ink-650 px-3 py-1.5 text-[13px] text-mist-200">Рендер: 3 потока{p.engine === 'demo' ? ' · демо' : ''}</span>
+        {failed && p.status !== 'building' && (
+          <button onClick={() => setShowVideo(true)} className="rounded-full bg-danger-bg px-3 py-1.5 text-[13px] font-semibold text-danger hover:brightness-110">
+            Проверка не пройдена — почему?
+          </button>
+        )}
         <button onClick={build} disabled={!ready || p.status === 'building'}
           title={ready ? '' : p.gate ? 'Сначала утвердите сценарий' : 'Сначала дождись, пока все сцены будут готовы'}
           className="rounded-[9px] bg-pen px-4 py-2 font-bold text-pen-ink hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40">
@@ -75,7 +82,10 @@ export function Studio({ id }: { id: string }) {
         <EditPanel project={p} n={selected} />
       </div>
       <Timeline project={p} selected={selected} onPick={setPicked} />
-      {showVideo && p.video && <BuildDialog src={p.video} title={p.title} demo={p.engine === 'demo'} onClose={() => setShowVideo(false)} />}
+      {showVideo && (p.video || failed) && (
+        <BuildDialog src={p.video} review={p.review} title={p.title} demo={p.engine === 'demo'} onClose={() => setShowVideo(false)}
+          onRebuild={ready ? () => { setShowVideo(false); void build(); } : undefined} />
+      )}
     </div>
   );
 }

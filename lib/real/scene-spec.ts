@@ -4,6 +4,8 @@
 
 export const TEMPLATES = ['host', 'object', 'compare', 'card'] as const;
 export const SETTINGS = ['room', 'sky', 'meadow', 'sunset', 'night', 'space', 'sea', 'board'] as const;
+/** Settings painted dark on purpose (renderer/templates.js, DARK): the self-review lets their darkness pass. */
+export const DARK_SETTINGS: readonly string[] = ['night', 'space', 'board'];
 export const PROP_IDS = ['sun', 'cloud', 'earth', 'moon', 'star', 'drop', 'rainbow', 'bulb', 'heart', 'book', 'prism', 'eye', 'tree',
   'flower', 'rocket', 'clock', 'atom', 'apple', 'gift', 'wave', 'planet', 'cat', 'fish', 'question', 'mountain'] as const;
 export const MOODS = ['happy', 'excited', 'laugh', 'love', 'proud', 'playful', 'hopeful', 'cool', 'thinking', 'idea', 'surprised',

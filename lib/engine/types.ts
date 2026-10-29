@@ -2,8 +2,8 @@
 // DemoEngine plays pre-rendered frames on a timer; RealEngine (lib/engine/real.ts) has Claude write the storyboard
 // and paints it with the painted renderer. Both emit the same EngineEvents, so the screens never need to know which one runs.
 // Inkframe 3: a run goes through stages (lib/store/types.ts); a gated stage stops in `awaiting` until approve() or revise().
-import type { OpenGate, StageId, StageMap, StageStatus } from '../store/types';
-export type { OpenGate, StageId, StageMap, StageStatus } from '../store/types';
+import type { OpenGate, Review, StageId, StageMap, StageStatus } from '../store/types';
+export type { OpenGate, Review, StageId, StageMap, StageStatus } from '../store/types';
 
 export type StyleId = 'watercolor' | 'kinetic' | 'reels' | 'promo' | 'science' | 'board' | 'clip';
 
@@ -68,6 +68,8 @@ export interface ProjectState {
   stages: StageMap;
   /** the gate waiting for a decision, if any */
   gate?: OpenGate;
+  /** the self-review of the newest cut; a FAIL comes without `video` */
+  review?: Review;
 }
 
 export interface ProjectSummary { id: string; title: string; status: ProjectStatus; duration: number; style: StyleId; thumb?: string; createdAt: string }
@@ -84,11 +86,13 @@ export type EngineEvent =
   | { type: 'scene.board'; n: number; patch: Partial<Omit<SceneBoard, 'n'>> }
   | { type: 'progress'; value: number; etaSec: number }
   | { type: 'track'; kind: 'voice' | 'music'; peaks: number[] }
-  /** an empty src takes the video away (a scene changed after the cut) */
+  /** an empty src takes the video away (a scene changed after the cut), and its review with it */
   | { type: 'video'; src: string }
   | { type: 'status'; status: ProjectStatus }
   | { type: 'stage'; stage: StageId; status: StageStatus; version: number }
-  | { type: 'gate'; stage: StageId; version: number; open: boolean; summary: string };
+  | { type: 'gate'; stage: StageId; version: number; open: boolean; summary: string }
+  /** the self-review of a fresh cut (comes before its `video`; a FAIL comes without one) */
+  | { type: 'review'; review: Review };
 
 /** An event scheduled `at` milliseconds after its script starts. */
 export interface TimedEvent { at: number; ev: EngineEvent }

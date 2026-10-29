@@ -7,6 +7,8 @@
 //   4. editScene() changes one scene (by Claude, by simple rules, or by new words typed in) and redraws only it.
 //   5. build() paints every scene at 1280×720 / 12 fps (scenes that didn't change come from the cache), then ffmpeg
 //      cuts them together with cross-fades, the voice over a ducked music bed and burned-in subtitles.
+//   6. Every cut is checked before it is handed out (lib/real/review.ts → review.json): a FAIL keeps the MP4 off the
+//      screen (status back to `ready`, the log says what is wrong, scenes with broken pictures are repainted next time).
 // It emits the same events as DemoEngine, so the screens stay as they are. Projects live in INKFRAME_PROJECTS_DIR.
 // Inkframe 3: the run goes through stages kept in projects/<id>/stages (lib/store/stages.ts). After the script is
 // written the run stops at the script gate (status `awaiting`): approve() goes on to voice and paint, revise() has
@@ -18,14 +20,15 @@ import { applyEvent, canBuild, emptyProject, normalizeProject } from './reducer'
 import type { EngineEvent, LogStep, ProjectState, ProjectSummary, ScenePatch, StageId, StageStatus, StartSettings, StepStatus, StudioEngine } from './types';
 import { StageStore, readGatePolicy } from '../store/stages';
 import { GateError } from '../store/gate';
-import { STAGE_NAMES, type Checkpoint, type GatePolicy, type LoggedEvent } from '../store/types';
+import { STAGE_NAMES, type Checkpoint, type GatePolicy, type LoggedEvent, type Review } from '../store/types';
 import { MUSIC_NAMES, VOICE_NAMES } from '../options';
 import { askClaude } from '../real/claude';
-import { Painter, type FrameOptions } from '../real/painter';
+import { Painter, rendererVersion, type FrameOptions } from '../real/painter';
 import { SR, decode, envelope, mixDown, music, peaks, place, tts, voiceId, wordsOf, writeWav, type TtsJob, type Word } from '../real/audio';
 import { FINAL_FPS, OVERLAP, cuesFor, cutArgs, ffmpeg, writeAss } from '../real/assemble';
 import { cleanScene, cleanStoryboard, editByRules, editPrompt, extractJson, reviseByRules, revisePrompt, storyboardPrompt, templateStoryboard, type BoardScene, type Storyboard } from '../real/storyboard';
-import { cleanSpec, describe, words, type StageScene } from '../real/scene-spec';
+import { DARK_SETTINGS, cleanSpec, describe, words, type StageScene } from '../real/scene-spec';
+import { reviewCrashed, reviewVideo, type ReviewPlan } from '../real/review';
 
 /** What the engine needs from the outside world; tests swap these for fakes. */
 export interface RealTools {
@@ -34,6 +37,8 @@ export interface RealTools {
   decode(file: string): Promise<Float32Array>;
   painter: Pick<Painter, 'frames' | 'close' | 'workers'>;
   ffmpeg(args: string[], cwd?: string): Promise<void>;
+  /** the self-review of a finished MP4 */
+  review(plan: ReviewPlan): Promise<Review>;
 }
 export interface RealOptions {
   dir?: string;
@@ -45,6 +50,8 @@ export interface RealOptions {
   finalWidth?: number;
   /** which stages stop for a human (default: inkframe.config.json + INKFRAME_GATES, see readGatePolicy) */
   gates?: GatePolicy;
+  /** part of every final clip's cache key (default: a hash of renderer/**, see rendererVersion) */
+  rendererVersion?: string;
 }
 
 const LEAD = .35, TAIL = .55;   // silence before and after each line inside its scene
@@ -68,6 +75,7 @@ export class RealEngine implements StudioEngine {
   private sketchFrames: number;
   private finalWidth: number;
   private gates: GatePolicy;
+  private rendererVersion?: string;
   /** after Claude fails to answer, skip it for a while instead of making every step wait for the timeout */
   private claudeDownUntil = 0;
 
@@ -78,8 +86,9 @@ export class RealEngine implements StudioEngine {
     this.sketchFrames = o.sketchFrames ?? 5;
     this.finalWidth = o.finalWidth ?? 1280;
     this.gates = o.gates ?? readGatePolicy();
+    this.rendererVersion = o.rendererVersion;
     this.tools = {
-      ask: p => askClaude(p), voice: tts, decode, ffmpeg,
+      ask: p => askClaude(p), voice: tts, decode, ffmpeg, review: reviewVideo,
       painter: o.tools?.painter ?? new Painter({ workers: Number(process.env.INKFRAME_RENDER_WORKERS) || 3, log: s => console.warn(s) }),
       ...o.tools,
     } as RealTools;
@@ -392,11 +401,15 @@ export class RealEngine implements StudioEngine {
     r.voiceOther = voiceOther;
     this.emit(e, { type: 'scene.board', n, patch: this.boardPatch(e, i) });
     if (revoice && s.voice !== 'none') await this.voiceAll(e, [i]);   // the scene keeps its storyboard length or stretches to the new voice
-    if (e.state.video) { this.emit(e, { type: 'video', src: '' }); this.emit(e, { type: 'status', status: 'ready' }); this.setStage(e, 'compose', 'pending'); }
+    if (e.state.video || e.state.review) {
+      this.emit(e, { type: 'video', src: '' }); this.emit(e, { type: 'status', status: 'ready' });
+      this.setStage(e, 'compose', 'pending'); this.setStage(e, 'review', 'pending');
+    }
     this.update(e, id, 'run', `Перерисовываю сцену ${n}`);
     r.version++;
     this.setStage(e, 'paint', 'in_progress');
     await this.draw(e, i, () => {});
+    this.update(e, `scene-${n}`, 'ok', `Сцена ${n} готова начерно`, '');   // draw() left the scene's own line «running»
     this.setStage(e, 'paint', 'completed');
     this.emit(e, { type: 'scene.edited', n, request: what });
     this.update(e, id, 'ok', `Сцена ${n} перерисована: «${what}»`, how === 'Claude' ? 'Правку понял Claude' : how === 'по правилам' ? 'Claude недоступен — правка по правилам' : '');
@@ -419,7 +432,8 @@ export class RealEngine implements StudioEngine {
       const w = this.finalWidth, opts: FrameOptions = { rs: Number(process.env.INKFRAME_FINAL_RS) || .5, width: w, quality: .9 };
       const jobs = e.scenes.map((r, i) => {
         const len = r.board.duration + (i < e.scenes.length - 1 ? OVERLAP : 0), stage = this.stage(r, { fast: process.env.INKFRAME_WATERCOLOR !== '1' });
-        const key = hash(JSON.stringify([stage, len, w])).slice(0, 12);
+        // the renderer's version is in the key: after a change to renderer/** every clip is painted again
+        const key = hash(JSON.stringify([stage, len, w, this.rendererVersion ??= rendererVersion()])).slice(0, 12);
         return { i, len, stage, clip: `clips/s${i + 1}-${key}.mp4`, frames: Math.round(len * FINAL_FPS) };
       });
       const todo = jobs.filter(j => !existsSync(join(e.dir, j.clip))), all = todo.reduce((a, j) => a + j.frames, 0) || 1;
@@ -445,20 +459,58 @@ export class RealEngine implements StudioEngine {
       if (hasSound) writeWav(join(e.dir, 'sound.wav'), mixDown(voice, bed));
       const cues = e.scenes.flatMap((r, i) => (r.audio ? cuesFor(r.board.line, r.audio.words, starts[i] + LEAD) : []));
       if (cues.length) writeAss(join(e.dir, 'subtitles.ass'), cues);
-      const out = `cut-${e.cut}.mp4`;
+      const out = `cut-${e.cut}.mp4`, src = `/api/projects/${e.state.id}/files/${out}`;
       await this.tools.ffmpeg(cutArgs({ clips: jobs.map(j => j.clip), starts, total, audio: hasSound ? 'sound.wav' : undefined, ass: cues.length ? 'subtitles.ass' : undefined, out }), e.dir);
       for (const f of readdirSync(e.dir)) if (/^cut-\d+\.mp4$/.test(f) && f !== out) rmSync(join(e.dir, f), { force: true });
       const used = new Set(jobs.map(j => j.clip.slice(6)));
       for (const f of readdirSync(join(e.dir, 'clips'))) if (!used.has(f)) rmSync(join(e.dir, 'clips', f), { force: true });
       rmSync(join(e.dir, 'tmp'), { recursive: true, force: true });
-      this.emit(e, { type: 'video', src: `/api/projects/${e.state.id}/files/${out}` });
-      this.update(e, id, 'ok', 'MP4 готов — можно скачать', `${fmtSec(total)} · ${w}×${Math.round(w * 9 / 16)} · ${[clips.length && 'голос', bed && 'музыка', cues.length && 'субтитры'].filter(Boolean).join(', ') || 'без звука'}${todo.length < jobs.length ? ` · перерисовано сцен: ${todo.length} из ${jobs.length}` : ''}`);
+      const what = `${fmtSec(total)} · ${w}×${Math.round(w * 9 / 16)} · ${[clips.length && 'голос', bed && 'музыка', cues.length && 'субтитры'].filter(Boolean).join(', ') || 'без звука'}${todo.length < jobs.length ? ` · перерисовано сцен: ${todo.length} из ${jobs.length}` : ''}`;
+      this.update(e, id, 'ok', 'MP4 склеен — проверяю, прежде чем отдать', what);
       this.setStage(e, 'compose', 'completed');
+
+      // the self-review: the MP4 is handed out only when nothing in it is broken
+      const rid = `review-${e.cut}`;
+      this.setStage(e, 'review', 'in_progress');
+      this.step(e, rid, 'Проверяю готовый ролик', 'run', 'длина, чёрные и пустые кадры, голос под репликами, громкость, субтитры');
+      const plan: ReviewPlan = {
+        file: join(e.dir, out), src, width: w, height: Math.round(w * 9 / 16), fps: 24, duration: total,
+        scenes: e.scenes.map((r, i) => ({ n: i + 1, start: starts[i], duration: r.board.duration, dark: DARK_SETTINGS.includes(r.board.spec.setting) })),
+        lines: e.scenes.flatMap((r, i) => (r.board.line.trim()
+          ? [{ n: i + 1, start: round3(starts[i] + LEAD), end: round3(starts[i] + (r.audio ? LEAD + r.audio.dur : r.board.duration - TAIL)), voiced: !!r.audio }] : [])),
+        voice: s.voice !== 'none', sound: hasSound,
+        ...(cues.length && { subtitles: { file: join(e.dir, 'subtitles.ass'), burned: true } }),
+      };
+      let review: Review;
+      try { review = await this.tools.review(plan); } catch (err) { review = reviewCrashed(src, err); }
+      writeFileSync(join(e.dir, 'review.json'), JSON.stringify(review, null, 1));
+      if (review.decision === 'FAIL' && e.state.video) this.emit(e, { type: 'video', src: '' });   // the previous MP4 is gone from disk too
+      this.emit(e, { type: 'review', review });
+      const said = (ok: boolean) => review.checks.filter(c => !c.ok && (ok ? c.warn : !c.warn)).map(c => c.detail).join('; ');
+      if (review.decision === 'FAIL') {
+        // scenes whose picture is broken are painted again on the next cut, not taken from the cache
+        const bad = new Set(review.checks.filter(c => !c.ok && !c.warn && (c.id === 'black' || c.id === 'blank'))
+          .flatMap(c => c.at ?? []).map(t => starts.filter(a => a <= t + .001).length - 1).filter(i => i >= 0));
+        for (const i of bad) rmSync(join(e.dir, jobs[i].clip), { force: true });
+        const again = bad.size ? ` При следующей сборке перерисую ${bad.size > 1 ? 'сцены' : 'сцену'} ${[...bad].map(i => i + 1).join(', ')}.` : '';
+        this.update(e, rid, 'err', 'Проверка не пройдена — MP4 не отдаю', said(false) + '.' + again);
+        this.update(e, id, 'err', 'MP4 склеен, но с ошибками — не отдаю', what);
+        this.setStage(e, 'review', 'failed');
+        e.cutQueued = false;   // «Собрать MP4» may be pressed again the moment the studio hears `ready`
+        this.emit(e, { type: 'status', status: 'ready' });
+        return;
+      }
+      this.update(e, rid, 'ok', review.decision === 'PASS' ? 'Проверил ролик: всё в порядке' : 'Проверил ролик: есть замечания', review.decision === 'PASS' ? '' : said(true));
+      this.setStage(e, 'review', 'completed');
+      this.emit(e, { type: 'video', src });
+      this.update(e, id, 'ok', 'MP4 готов — можно скачать', what);
+      e.cutQueued = false;
       this.emit(e, { type: 'status', status: 'done' });
     } catch (err) {
       rmSync(join(e.dir, 'tmp'), { recursive: true, force: true });
       this.update(e, id, 'err', 'MP4 не собрался', (err as Error).message.slice(0, 200));
-      this.setStage(e, 'compose', 'failed');
+      if (e.state.stages.review.status === 'in_progress') this.setStage(e, 'review', 'failed');
+      else this.setStage(e, 'compose', 'failed');
       this.emit(e, { type: 'status', status: 'ready' });
     }
   }
@@ -550,6 +602,7 @@ function journalLine(ev: EngineEvent): Omit<LoggedEvent, 'at'> | undefined {
     case 'scene.status': return { kind: 'scene', stage: 'paint', scene: ev.n, payload: { status: ev.status } };
     case 'scene.edited': return { kind: 'scene', stage: 'paint', scene: ev.n, payload: { edited: ev.request } };
     case 'video': return { kind: 'cut', stage: 'compose', payload: { src: ev.src } };
+    case 'review': return { kind: 'review', stage: 'review', payload: { decision: ev.review.decision, video: ev.review.video, faults: ev.review.checks.filter(c => !c.ok).map(c => ({ id: c.id, warn: !!c.warn, detail: c.detail, ...(c.at && { at: c.at }) })) } };
     case 'log.add': return ev.step.status === 'err' ? { kind: 'error', payload: { text: ev.step.text, detail: ev.step.detail ?? '' } } : undefined;
     case 'log.update': return ev.status === 'err' ? { kind: 'error', payload: { id: ev.id, text: ev.text ?? '', detail: ev.detail ?? '' } } : undefined;
     default: return undefined;

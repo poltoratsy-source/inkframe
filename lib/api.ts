@@ -1,6 +1,6 @@
 // What the screens call. With a server: the API routes and the SSE stream. On the static demo site: the same
 // DemoEngine, running right here in the browser tab. The screens never need to know which one they talk to.
-import type { EngineEvent, ProjectState, ProjectSummary, ScenePatch, StageId, StartSettings, StudioEngine } from './engine/types';
+import type { EngineEvent, ProjectState, ProjectSummary, Review, ScenePatch, StageId, StartSettings, StudioEngine } from './engine/types';
 import { STATIC_SITE } from './site';
 
 export interface SettingsInfo { hasKey: boolean; engine: string; staticSite?: boolean }
@@ -60,6 +60,12 @@ export const api = {
 
   build: (id: string): Promise<unknown> =>
     STATIC_SITE ? run(e => e.build(id)) : call(`/api/projects/${id}/build`, { method: 'POST' }),
+
+  /** The self-review of the newest cut; fails when the cartoon has not been cut and checked yet. */
+  review: (id: string): Promise<Review> =>
+    STATIC_SITE
+      ? run(e => { const r = e.get(id)?.review; if (!r) throw new Error('Ролик ещё не проверяли: сначала соберите MP4'); return r; })
+      : call<Review>(`/api/projects/${id}/review`),
 
   settings: (): Promise<SettingsInfo> =>
     STATIC_SITE ? Promise.resolve({ hasKey: false, engine: 'demo', staticSite: true }) : call<SettingsInfo>('/api/settings'),

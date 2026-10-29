@@ -5,7 +5,7 @@ const NAME: Record<CheckId, string> = {
   clipping: 'Перегруз звука', subtitles: 'Субтитры', slideshow: 'Не «слайд-шоу»',
 };
 const HEAD = {
-  PASS: ['bg-ok-bg text-ok', 'Проверка пройдена'], WARN: ['bg-warn-bg text-warn', 'Есть замечания'], FAIL: ['bg-danger-bg text-danger', 'MP4 не отдаём: исправляю'],
+  PASS: ['bg-ok-bg text-ok', 'Проверка пройдена'], WARN: ['bg-warn-bg text-warn', 'Есть замечания'], FAIL: ['bg-danger-bg text-danger', 'Нашлись ошибки — MP4 не отдаю'],
 } as const;
 
 /** The self-review of a finished MP4; times are chips that jump the video there. */

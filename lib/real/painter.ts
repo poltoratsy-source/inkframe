@@ -1,9 +1,10 @@
 // Painter: paints scene frames in headless Chrome with the painted engine (renderer/stage.html: p5.js + p5.brush).
 // One browser, at most `workers` pages painting at once (3 by default). A page is opened at one internal render
 // scale (RS: .25 for drafts, .5 for the final cut) and reused for every frame at that scale.
-import { existsSync, readdirSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { resolve } from 'node:path';
+import { join, relative, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import puppeteer, { type Browser, type Page } from 'puppeteer-core';
 import type { StageScene } from './scene-spec';
@@ -21,6 +22,24 @@ export function findChrome(explicit?: string): string {
   const found = all.find(p => p && existsSync(p));
   if (!found) throw new Error('Chrome not found: set CHROME_PATH');
   return found;
+}
+
+/** The painter's own version: a hash of everything a frame is painted with — renderer/** (not the voice script)
+ *  and the p5 / p5.brush it loads. Final clips are cached under it, so a changed renderer repaints them. */
+export function rendererVersion(dir = resolve('renderer'), modules = resolve('node_modules')): string {
+  const h = createHash('sha1'), walk = (d: string): string[] =>
+    readdirSync(d, { withFileTypes: true }).flatMap(x => (x.isDirectory() ? walk(join(d, x.name)) : [join(d, x.name)])).sort();
+  if (existsSync(dir)) {
+    for (const f of walk(dir)) {
+      const rel = relative(dir, f);
+      if (rel.endsWith('.py') || rel.includes('__pycache__')) continue;
+      h.update(rel).update('\0').update(readFileSync(f)).update('\0');
+    }
+  }
+  for (const m of ['p5', 'p5.brush']) {
+    try { h.update(`${m}@${JSON.parse(readFileSync(join(modules, m, 'package.json'), 'utf8')).version}`); } catch { h.update(`${m}@?`); }
+  }
+  return h.digest('hex').slice(0, 10);
 }
 
 interface Slot { page: Page; rs: number }

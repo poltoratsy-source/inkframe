@@ -8,7 +8,9 @@ import { RealEngine, type RealTools } from '../lib/engine/real.ts';
 import { SR } from '../lib/real/audio.ts';
 import { DEFAULT_SETTINGS } from '../lib/options.ts';
 import type { EngineEvent } from '../lib/engine/types.ts';
-import type { Checkpoint, LoggedEvent } from '../lib/store/types.ts';
+import type { Checkpoint, LoggedEvent, Review } from '../lib/store/types.ts';
+import type { ReviewPlan } from '../lib/real/review.ts';
+import { canBuild } from '../lib/engine/reducer.ts';
 import type { StageScene } from '../lib/real/scene-spec.ts';
 
 const settings = { ...DEFAULT_SETTINGS, idea: 'Почему небо голубое', duration: 15 };
@@ -24,8 +26,19 @@ const BOARD = {
 /** What Claude answers when the script comes back with a note: the same storyboard with a new first line. */
 const REWRITTEN = { ...BOARD, scenes: [{ ...BOARD.scenes[0], line: 'Привет! Сегодня коротко: почему небо голубое?' }, ...BOARD.scenes.slice(1)] };
 
-function fakes(o: { claude?: 'ok' | 'down' } = {}) {
-  const painted: { scene: StageScene; times: number[] }[] = [], cuts: string[][] = [], asked: string[] = [];
+/** What the fake self-review answers: PASS, a WARN about loud sound, a FAIL with a black run in scene 2, or a crash. */
+type Verdict = 'PASS' | 'WARN' | 'FAIL' | 'throw';
+function verdict(v: Verdict, plan: ReviewPlan): Review {
+  if (v === 'throw') throw new Error('ffprobe: not found');
+  const checks: Review['checks'] = [{ id: 'probe', ok: true, detail: '1280×720' }];
+  if (v === 'WARN') checks.push({ id: 'clipping', ok: false, warn: true, detail: 'звук упирается в потолок', at: [3] });
+  if (v === 'FAIL') checks.push({ id: 'black', ok: false, detail: 'чёрный экран 1,0 с (сцена 2)', at: [plan.scenes[1].start + .5] });
+  return { at: new Date().toISOString(), video: plan.src, decision: v, checks };
+}
+
+function fakes(o: { claude?: 'ok' | 'down'; review?: Verdict } = {}) {
+  const painted: { scene: StageScene; times: number[] }[] = [], cuts: string[][] = [], asked: string[] = [], plans: ReviewPlan[] = [];
+  const box = { review: o.review ?? 'PASS' as Verdict };
   const tools: Partial<RealTools> = {
     ask: async p => {
       asked.push(p);
@@ -39,8 +52,9 @@ function fakes(o: { claude?: 'ok' | 'down' } = {}) {
     decode: async f => { const words = JSON.parse((await import('node:fs')).readFileSync(f.replace(/\.mp3$/, '.json'), 'utf8')).words.length; return new Float32Array(Math.round(words * .35 * SR)).fill(.2); },
     painter: { workers: 3, close: async () => {}, frames: async (scene, times, _o, onFrame) => { painted.push({ scene, times }); for (let i = 0; i < times.length; i++) await onFrame(i, Buffer.from('jpeg')); } },
     ffmpeg: async (args, cwd) => { cuts.push(args); writeFileSync(join(cwd ?? '', args[args.length - 1]), 'mp4'); },
+    review: async plan => { plans.push(plan); return verdict(box.review, plan); },
   };
-  return { tools, painted, cuts, asked };
+  return { tools, painted, cuts, asked, plans, box };
 }
 const until = (e: RealEngine, id: string, pred: (ev: EngineEvent) => boolean) => new Promise<void>(resolve => {
   let off = () => {};
@@ -258,4 +272,117 @@ test('a project saved before Inkframe 3 (no stages) opens and can be edited', as
   assert.deepEqual([s.stages.brief.status, s.stages.script.status, s.stages.paint.status, s.stages.storyboard.status], ['completed', 'completed', 'completed', 'pending']);
   again.editScene(p.id, 1, 'ночь');
   await until(again, p.id, ev => ev.type === 'scene.edited');
+});
+
+const built = (e: RealEngine, id: string) => {
+  const end = until(e, id, ev => ev.type === 'status' && (ev.status === 'done' || ev.status === 'ready'));
+  e.build(id);
+  return end;
+};
+const clipsMade = (f: ReturnType<typeof fakes>) => f.cuts.filter(a => a.includes('-framerate')).length;
+
+test('after the cut comes the self-review: PASS hands out the MP4, with review.json and a journal line', async () => {
+  const f = fakes(), e = engine(f);
+  const p = e.create(settings);
+  await ready(e, p.id);
+  await built(e, p.id);
+  const s = e.get(p.id)!, dir = dirOf(e, p.id);
+  assert.equal(s.status, 'done');
+  assert.equal(s.video, `/api/projects/${p.id}/files/cut-1.mp4`);
+  assert.deepEqual([s.stages.compose.status, s.stages.review.status], ['completed', 'completed']);
+  assert.equal(s.review?.decision, 'PASS');
+  assert.equal(json<Review>(join(dir, 'review.json')).decision, 'PASS');
+  assert.ok(journal(dir).some(l => l.kind === 'review' && l.stage === 'review' && l.payload.decision === 'PASS'));
+  assert.ok(s.log.some(l => l.id === 'review-1' && l.status === 'ok' && /всё в порядке/.test(l.text)));
+  assert.ok(s.log.some(l => l.id === 'build-1' && l.text === 'MP4 готов — можно скачать'));
+  // what the review was told to expect: the storyboard's length, every scene and line, the subtitles
+  const plan = f.plans[0];
+  assert.equal(plan.file, join(dir, 'cut-1.mp4'));
+  assert.deepEqual([plan.width, plan.height, plan.fps, plan.voice, plan.sound], [1280, 720, 24, true, true]);
+  assert.equal(plan.duration, s.scenes.reduce((a, sc) => a + sc.duration, 0));
+  assert.deepEqual(plan.scenes.map(x => [x.n, x.start, x.dark]), s.scenes.map(sc => [sc.n, sc.start, false]));
+  assert.ok(plan.lines.length === 3 && plan.lines.every((l, i) => l.voiced && l.start > s.scenes[i].start && l.end <= s.scenes[i].start + s.scenes[i].duration));
+  assert.deepEqual(plan.subtitles, { file: join(dir, 'subtitles.ass'), burned: true });
+});
+
+test('a FAIL keeps the MP4 off the screen, says why, and the next cut repaints the broken scene', async () => {
+  const f = fakes({ review: 'FAIL' }), e = engine(f);
+  const p = e.create(settings);
+  await ready(e, p.id);
+  await built(e, p.id);
+  let s = e.get(p.id)!;
+  const dir = dirOf(e, p.id);
+  assert.equal(s.status, 'ready', 'not done: the MP4 is not handed out');
+  assert.equal(s.video, undefined);
+  assert.equal(s.review?.decision, 'FAIL');
+  assert.equal(s.review?.video, `/api/projects/${p.id}/files/cut-1.mp4`, 'the report still points at the draft to look at');
+  assert.deepEqual([s.stages.compose.status, s.stages.review.status], ['completed', 'failed']);
+  const line = s.log.find(l => l.id === 'review-1')!;
+  assert.equal(line.status, 'err');
+  assert.match(line.text, /Проверка не пройдена — MP4 не отдаю/);
+  assert.match(line.detail!, /чёрный экран 1,0 с \(сцена 2\)\. При следующей сборке перерисую сцену 2\./);
+  assert.ok(s.log.some(l => l.id === 'build-1' && l.status === 'err'));
+  assert.ok(canBuild(s), '«Собрать MP4» works again');
+  assert.equal(json<Review>(join(dir, 'review.json')).decision, 'FAIL');
+  assert.ok(journal(dir).some(l => l.kind === 'review' && l.payload.decision === 'FAIL'));
+  assert.equal(readdirSync(join(dir, 'clips')).filter(c => c.startsWith('s2-')).length, 0, 'the broken scene leaves the cache');
+
+  f.box.review = 'PASS';
+  const before = clipsMade(f);
+  await built(e, p.id);
+  s = e.get(p.id)!;
+  assert.equal(clipsMade(f) - before, 1, 'only scene 2 is painted again');
+  assert.equal(s.status, 'done');
+  assert.equal(s.video, `/api/projects/${p.id}/files/cut-2.mp4`);
+  assert.equal(s.stages.review.status, 'completed');
+
+  // a FAIL after a good cut takes the old MP4 off the screen as well (its file is replaced by the new cut)
+  f.box.review = 'FAIL';
+  await built(e, p.id);
+  s = e.get(p.id)!;
+  assert.deepEqual([s.status, s.video, s.review?.decision], ['ready', undefined, 'FAIL']);
+  assert.equal(s.review?.video, `/api/projects/${p.id}/files/cut-3.mp4`);
+
+  // a scene edit takes the MP4 and its report away
+  e.editScene(p.id, 1, '', { line: 'Привет! Небо — голубое. Почему?' });
+  await until(e, p.id, ev => ev.type === 'scene.edited');
+  s = e.get(p.id)!;
+  assert.deepEqual([s.video, s.review, s.stages.review.status], [undefined, undefined, 'pending']);
+});
+
+test('a WARN hands out the MP4 with the remarks; a review that cannot run is a WARN too', async () => {
+  const f = fakes({ review: 'WARN' }), e = engine(f);
+  const p = e.create(settings);
+  await ready(e, p.id);
+  await built(e, p.id);
+  let s = e.get(p.id)!;
+  assert.equal(s.status, 'done');
+  assert.ok(s.video);
+  assert.ok(s.log.some(l => l.id === 'review-1' && l.status === 'ok' && /есть замечания/.test(l.text) && /потолок/.test(l.detail ?? '')));
+
+  f.box.review = 'throw';
+  e.editScene(p.id, 1, '', { line: 'Привет! Почему же небо голубое?' });
+  await until(e, p.id, ev => ev.type === 'scene.edited');
+  await built(e, p.id);
+  s = e.get(p.id)!;
+  assert.equal(s.status, 'done');
+  assert.equal(s.review?.decision, 'WARN');
+  assert.match(s.review!.checks[0].detail, /проверить ролик не получилось: ffprobe: not found/);
+});
+
+test('the clip cache knows the renderer version: a new renderer paints every clip again', async () => {
+  const f = fakes(), dir = mkdtempSync(join(tmpdir(), 'inkframe-'));
+  const a = new RealEngine({ dir, tools: f.tools, draftFps: 2, sketchFrames: 2, rendererVersion: 'a' });
+  const p = a.create(settings);
+  await ready(a, p.id);
+  await built(a, p.id);
+  assert.equal(clipsMade(f), 3);
+  await tick(20);
+  const same = new RealEngine({ dir, tools: f.tools, rendererVersion: 'a' });
+  await built(same, p.id);
+  assert.equal(clipsMade(f), 3, 'the same renderer: every clip from the cache');
+  const b = new RealEngine({ dir, tools: f.tools, rendererVersion: 'b' });
+  await built(b, p.id);
+  assert.equal(clipsMade(f), 6, 'a changed renderer: all three painted again');
+  assert.equal(readdirSync(join(dir, p.id, 'clips')).length, 3, 'the old clips are cleaned away');
 });

@@ -60,7 +60,8 @@ export function applyEvent(s: ProjectState, ev: EngineEvent): ProjectState {
     case 'scene.edited': return scene(ev.n, sc => ({ ...sc, edited: true, version: sc.version + 1, edits: [...sc.edits, ev.request] }));
     case 'progress': return { ...s, progress: ev.value, etaSec: ev.etaSec };
     case 'track': return { ...s, tracks: { ...s.tracks, [ev.kind]: ev.peaks } };
-    case 'video': return { ...s, video: ev.src || undefined };
+    case 'video': return ev.src ? { ...s, video: ev.src } : { ...s, video: undefined, review: undefined };
+    case 'review': return { ...s, review: ev.review };
     case 'status': return { ...s, status: ev.status };
     case 'stage': return { ...s, stages: { ...(s.stages ?? defaultStages()), [ev.stage]: { status: ev.status, version: ev.version } } };
     case 'gate':

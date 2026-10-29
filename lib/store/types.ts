@@ -6,8 +6,8 @@ export type StageStatus = 'pending' | 'in_progress' | 'awaiting' | 'completed' |
 
 export const STAGE_IDS: StageId[] = ['brief', 'script', 'storyboard', 'paint', 'voice', 'compose', 'review', 'final'];
 export const STAGE_STATUSES: StageStatus[] = ['pending', 'in_progress', 'awaiting', 'completed', 'revised', 'failed'];
-/** Stages the engines run today; storyboard, review and final join with their milestones (architecture.md, build order). */
-export const LIVE_STAGES: StageId[] = ['brief', 'script', 'paint', 'voice', 'compose'];
+/** Stages the engines run today; storyboard and final join with their milestones (architecture.md, build order). */
+export const LIVE_STAGES: StageId[] = ['brief', 'script', 'paint', 'voice', 'compose', 'review'];
 
 export const STAGE_NAMES: Record<StageId, string> = {
   brief: 'Бриф', script: 'Сценарий', storyboard: 'Раскадровка', paint: 'Отрисовка',
@@ -64,3 +64,21 @@ export const defaultStages = (): StageMap =>
 
 /** The open gate as the screens see it. */
 export interface OpenGate { stage: StageId; version: number; summary: string }
+
+/** What the self-review looks at in a finished MP4 (lib/real/review.ts). */
+export type CheckId = 'probe' | 'duration' | 'black' | 'blank' | 'silence' | 'clipping' | 'subtitles' | 'slideshow';
+/** One check: ok, or not ok with `warn` (a remark: the MP4 is still handed out) or without it (a fault: it is not). */
+export interface ReviewCheck { id: CheckId; ok: boolean; warn?: boolean; detail: string; at?: number[] }
+
+/** projects/<id>/review.json — the self-review of the newest cut. FAIL keeps the MP4 off the screen. */
+export interface Review {
+  at: string;
+  /** the checked MP4 as the studio opens it (/api/projects/<id>/files/cut-N.mp4) */
+  video: string;
+  decision: 'PASS' | 'WARN' | 'FAIL';
+  checks: ReviewCheck[];
+}
+
+/** FAIL if any check failed, WARN if any only warned, else PASS. */
+export const decide = (checks: ReviewCheck[]): Review['decision'] =>
+  checks.some(c => !c.ok && !c.warn) ? 'FAIL' : checks.some(c => !c.ok) ? 'WARN' : 'PASS';

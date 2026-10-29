@@ -4,7 +4,7 @@ next-env.d.ts
 *.tsbuildinfo
 .env.local
 .env*.local
-projects/
+/projects/
 out/
 *.log
 .DS_Store

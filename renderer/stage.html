@@ -1,0 +1,32 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Inkframe stage</title>
+<!-- One painted scene, drawn from window.SCENE (see lib/real/scene-spec.ts). The renderer (lib/real/painter.ts) sets
+     SCENE before every frame and calls window.renderScaled(t, width, quality). Nothing here touches the network. -->
+<style>
+  @font-face { font-family: 'Caveat'; src: url('fonts/Caveat.ttf') format('truetype'); font-weight: 400 700; }
+  html, body { margin: 0; background: #1b1820; }
+  #out { width: 960px; height: 540px; }
+  .p5Canvas { display: none !important; }
+</style>
+<script>
+  // A scene to show when the page is opened by hand (renderer pages get theirs before every frame).
+  window.SCENE = window.SCENE || { template: 'host', setting: 'sky', mood: 'happy', prop: 'sun', caption: 'Inkframe', duration: 4, voice: '' };
+  window.EXTRA_FONTS = [['700 80px Caveat', 'Аа']];
+  const PROJECT = { duration: 600, bpm: 96, offset: 0, renderScale: .5 };
+</script>
+<script src="../node_modules/p5/lib/p5.min.js"></script>
+<script src="../node_modules/p5.brush/dist/p5.brush.js"></script>
+</head>
+<body>
+<canvas id="out" width="1920" height="1080"></canvas>
+<div class="bar" hidden><input id="scrub" type="range"><span id="tt"></span></div>
+<script src="engine/core.js"></script>
+<script src="engine/clawd.js"></script>
+<script src="engine/timeline.js"></script>
+<script src="props.js"></script>
+<script src="templates.js"></script>
+</body>
+</html>

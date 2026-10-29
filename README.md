@@ -11,25 +11,41 @@ redraws only that scene. At the end you get an MP4 with a voice-over and music.
 
 ![Start screen](demo/01-start.png)
 
-## Status: stage 1, demo mode
+## Status: stage 2, the real engine
 
-This is the first version. The studio screens are finished and work end to end, but the cartoon is played
-by a **demo engine**: it replays a cartoon that was painted earlier with the same engine ("How a lidar works"),
-as if Claude were drawing it right now. Nothing is sent to Claude yet.
+Inkframe has two engines behind one interface, `StudioEngine` (`lib/engine/types.ts`):
 
-| Works now | Comes in stage 2 |
-|---|---|
-| Start screen: idea, examples, 7 styles (Watercolour active), 8 settings | Claude writes `storyboard.json` through the Claude Agent SDK |
-| Studio: "What Claude is doing" log, the stage with the pen, scene strip, voice and music lanes | Real painting: p5.js + p5.brush scenes rendered in headless Chrome |
-| Sketch → colour for every scene, live over server-sent events | Voice with edge-tts, music ducked under the voice |
-| Scene edits by text and quick-edit chips | Claude redraws only the edited scene |
-| "Build MP4": player and download | ffmpeg glues scenes, voice and music |
-| Own API key field (kept in `.env.local` only) | |
+| | Demo engine (`INKFRAME_ENGINE=demo`, default) | Real engine (`INKFRAME_ENGINE=real`) |
+|---|---|---|
+| Storyboard | replays a finished cartoon | Claude writes it (`claude -p` on this computer); a template storyboard if Claude can't be reached |
+| Drawing | pre-rendered frames on a timer | every scene painted with p5.js + p5.brush in headless Chrome: pencil sketch, then a colour draft, streamed live |
+| Voice | waveform of the demo film | edge-tts on every line; scenes stretch to fit the voice |
+| Scene edits | a CSS look | Claude (or simple rules) changes that scene's spec or words; only that scene is redrawn and re-voiced |
+| MP4 | the demo film | 1280×720, 12 fps painted, cross-fades, voice over a ducked music bed, burned-in subtitles |
 
-All screens talk to one interface, `StudioEngine` (`lib/engine/types.ts`). Stage 2 plugs in `RealEngine`
-(`lib/engine/real.ts`) behind it, so the screens stay as they are.
+The GitHub Pages demo site always uses the demo engine.
 
-![The studio while a scene is being drawn](demo/02-studio-drawing.png)
+![The real engine painting scene 1](demo/05-real-drawing.jpg)
+
+### How the real engine paints
+
+Claude never writes drawing code. The storyboard fills a **SceneSpec** per scene (`lib/real/scene-spec.ts`) and the
+painter draws it from four templates (`renderer/templates.js`) and 25 props (`renderer/props.js`):
+
+- `host`: Clawd talks to the viewer, a prop pops up beside him;
+- `object`: one big prop with up to two labels and arrows;
+- `compare`: two things side by side with captions, Clawd looks from one to the other;
+- `card`: the end card with the code word.
+
+Settings: room, sky, meadow, sunset, night, space, sea, board. Anything outside the lists is dropped, so a storyboard
+can't break the painter.
+
+![Frames from a finished cartoon: "Why is the sky blue", 16.6 s](demo/06-real-frames.jpg)
+
+Without a GPU, full watercolour fills cost 10–20 s a frame in software GL, so drafts and the final cut use flat washes
+on the same paper grain (about 0.6 s a frame with three painters). `INKFRAME_WATERCOLOR=1` turns full watercolour back on
+for the final cut. A 15 s cartoon takes about 1 minute for the drafts and 3 minutes for the MP4 on a 4-core server;
+an edit redraws one scene in under a minute and the next MP4 re-paints only that scene.
 
 ## Run it
 
@@ -46,14 +62,26 @@ With Docker:
 docker compose up --build    # http://127.0.0.1:3700
 ```
 
-Settings live in `.env.local` (copy `.env.example`): `INKFRAME_ENGINE` (`demo` for now) and
+Settings live in `.env.local` (copy `.env.example`): `INKFRAME_ENGINE` (`demo` or `real`) and
 `INKFRAME_DEMO_SPEED` (2 = twice as fast).
+
+### The real engine
+
+It needs, on the same computer: Chrome or Chromium (found automatically, or `CHROME_PATH`), ffmpeg, Python 3 with
+`pip install edge-tts`, and Claude Code (`claude`) logged in, or your own API key (below).
+
+```bash
+INKFRAME_ENGINE=real npm run dev
+```
+
+Projects (drafts, clips, the MP4) are kept in `projects/`. All real-engine settings are listed in `.env.example`:
+Claude timeout and model, template-only mode, the number of painters (at most 3), software GL, final render scale.
 
 ### Your Claude key
 
 Click the **Claude** pill in the top bar and paste your Anthropic API key (`sk-ant-…`). It is written to
 `.env.local` on your computer only; `.gitignore` keeps that file out of git, and the key is never sent back to the
-browser. Without a key Inkframe will use the Claude Code login on the same computer (stage 2).
+browser. Without a key the real engine uses the Claude Code login on the same computer.
 
 ## Demo mode
 
@@ -90,16 +118,18 @@ every push to `main`. Turn it on once: **Settings → Pages → Source: GitHub A
 | Command | What it does |
 |---|---|
 | `npm run dev` | Studio on 127.0.0.1:3700 |
-| `npm test` | Engine, reducer, demo-script and settings tests (Node test runner) |
+| `npm test` | Engines, reducer, storyboard, sound, subtitles and settings tests (Node test runner, no Chrome needed) |
 | `npm run typecheck` | TypeScript check |
 | `npm run build:demo` | Static demo site in `out/` (`--out=<dir>` for another folder) |
 | `node scripts/check-static.mjs <url>` | Headless-Chrome smoke test of a demo site: start → draw → play the MP4 |
 | `npm run demo:record` | Walkthrough video and screenshots into `demo/` |
+| `node --import tsx scripts/paint-check.ts <out.jpg> [rs] [width] [sketch\|fast]` | Paints sample scenes of every template into one contact sheet |
 
 ## How it is built
 
-Next.js (App Router), React, TypeScript, Tailwind CSS. The server keeps projects in memory and streams engine events
-over SSE; the browser folds them with the same pure reducer (`lib/engine/reducer.ts`) the tests use.
+Next.js (App Router), React, TypeScript, Tailwind CSS. The server streams engine events over SSE; the browser folds
+them with the same pure reducer (`lib/engine/reducer.ts`) the tests use. The real engine lives in `lib/engine/real.ts`
+and `lib/real/` (storyboard, Claude CLI, painter, sound, ffmpeg); the painted stage in `renderer/`.
 
 ## Thanks
 
@@ -108,6 +138,9 @@ over SSE; the browser folds them with the same pure reducer (`lib/engine/reducer
   [`licenses/ClaudeAnimationBase-LICENSE`](licenses/ClaudeAnimationBase-LICENSE).
 - [p5.brush](https://github.com/acamposuribe/p5.brush) by Alejandro Campos (MIT) and [p5.js](https://p5js.org):
   the watercolour and ink brushes.
+- [Caveat](https://github.com/googlefonts/caveat) by Impallari Type (SIL OFL 1.1): the hand-lettered captions,
+  licence in [`licenses/Caveat-OFL.txt`](licenses/Caveat-OFL.txt).
+- [edge-tts](https://github.com/rany2/edge-tts) (LGPL-3.0, used as a separate program): the voice-over.
 - [Claude](https://www.anthropic.com/claude) by Anthropic, who writes and paints the cartoons.
 
 ## Licence

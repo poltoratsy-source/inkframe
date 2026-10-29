@@ -1,6 +1,7 @@
 // What a storyboard may ask the painter for. Claude never writes drawing code: it fills these fields, and
 // renderer/templates.js + renderer/props.js paint them. clean*() turns anything (Claude's JSON included) into a
 // valid spec, dropping what it doesn't know.
+import { ROLES, isRole, type Role, type StyleId } from '../styles';
 
 export const TEMPLATES = ['host', 'object', 'compare', 'card'] as const;
 export const SETTINGS = ['room', 'sky', 'meadow', 'sunset', 'night', 'space', 'sea', 'board'] as const;
@@ -18,7 +19,8 @@ export type PropId = (typeof PROP_IDS)[number];
 export type Mood = (typeof MOODS)[number];
 export type ColorName = (typeof COLOR_NAMES)[number];
 
-export interface Side { prop: PropId; color?: ColorName; caption?: string }
+/** role: the side's meaning in a style with a colour grammar (Ink: flow orange, problem red, good blue). */
+export interface Side { prop: PropId; color?: ColorName; caption?: string; role?: Role }
 export interface SceneSpec {
   template: TemplateId;
   setting: SettingId;
@@ -39,6 +41,12 @@ export interface SceneSpec {
   heroSize?: 'normal' | 'big';
   hero?: boolean;
   pace?: 'slow' | 'normal' | 'fast';
+  /** colour grammar (lib/styles.ts, used by the Ink style; Watercolour ignores them): the main prop's role, the big
+   *  words' role, one role per label (its arrow and its words; arrows are flow without one), the card title's role */
+  propRole?: Role;
+  captionRole?: Role;
+  labelRoles?: (Role | null)[];
+  titleRole?: Role;
 }
 
 /** How the line boils (renderer/engine/core.js): set by the engine or a style pack, never by the storyboard. */
@@ -46,7 +54,8 @@ export interface BoilParams { fps?: number; amp?: number; inkOnly?: boolean; hol
 
 /** What the stage page gets for one frame (renderer/templates.js reads window.SCENE). */
 /** `format`: the frame format (renderer/layout.js); the painter paints it on a page opened for that format. */
-export interface StageScene extends SceneSpec { duration: number; voice: string; sketch?: boolean; fast?: boolean; boil?: BoilParams; format?: '16:9' | '9:16' | '1:1' }
+/** `style`: the style pack (renderer/styles); the painter paints it on a page opened for that pack. */
+export interface StageScene extends SceneSpec { duration: number; voice: string; sketch?: boolean; fast?: boolean; boil?: BoilParams; format?: '16:9' | '9:16' | '1:1'; style?: StyleId }
 
 const pick = <T extends string>(list: readonly T[], v: unknown, d?: T): T | undefined =>
   (typeof v === 'string' && (list as readonly string[]).includes(v.trim().toLowerCase()) ? v.trim().toLowerCase() as T : d);
@@ -61,7 +70,8 @@ function cleanSide(v: unknown): Side | undefined {
   if (!v || typeof v !== 'object') return undefined;
   const o = v as Record<string, unknown>, prop = pick(PROP_IDS, o.prop);
   if (!prop) return undefined;
-  return { prop, ...(pick(COLOR_NAMES, o.color) && { color: pick(COLOR_NAMES, o.color) }), ...(words(o.caption, 28) && { caption: words(o.caption, 28) }) };
+  const role = pick(ROLES, o.role);
+  return { prop, ...(pick(COLOR_NAMES, o.color) && { color: pick(COLOR_NAMES, o.color) }), ...(words(o.caption, 28) && { caption: words(o.caption, 28) }), ...(role && { role }) };
 }
 
 export function cleanSpec(v: unknown, fallback: Partial<SceneSpec> = {}): SceneSpec {
@@ -84,10 +94,19 @@ export function cleanSpec(v: unknown, fallback: Partial<SceneSpec> = {}): SceneS
   if (o.heroSize === 'big') s.heroSize = 'big';
   if (o.hero === false) s.hero = false;
   const pace = pick(['slow', 'normal', 'fast'] as const, o.pace); if (pace && pace !== 'normal') s.pace = pace;
+  for (const k of ['propRole', 'captionRole', 'titleRole'] as const) { const r = pick(ROLES, o[k]); if (r) s[k] = r; }
   // a template that lacks what it needs falls back to one that doesn't
   if (s.template === 'compare' && !(s.left && s.right)) s.template = s.prop ? 'object' : 'host';
   if (s.template === 'object' && !s.prop) s.prop = 'question';
   if (s.template === 'card' && !s.title) s.title = s.caption ?? '★';
+  // roles only where the template draws that element
+  if (Array.isArray(o.labelRoles) && s.labels) {
+    const r = s.labels.map((_, i) => { const v = (o.labelRoles as unknown[])[i]; return isRole(v) ? v : null; });
+    if (r.some(Boolean)) s.labelRoles = r;
+  }
+  if (s.template !== 'host' && s.template !== 'object') delete s.propRole;
+  if (s.template !== 'card') delete s.titleRole;
+  if (s.template !== 'compare') { if (s.left) delete s.left.role; if (s.right) delete s.right.role; }
   return s;
 }
 

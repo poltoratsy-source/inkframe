@@ -1,6 +1,8 @@
 // core.js: constants, helpers, paper, paint wrapper, compositing and render hooks.
 // From ClaudeAnimationBase (MIT, github.com/JohnHeibel/ClaudeAnimationBase), with an internal render scale (RS) added.
-// Length and rhythm come from PROJECT in config.js.
+// Length and rhythm come from PROJECT in config.js; the look comes from the style pack PROJECT.style names
+// (renderer/styles/<id>/style.json, loaded by stage.html as window.STYLE): palette, paper, brushes, how shapes are
+// painted, boil, springs, lettering and, for Ink, the colour grammar. Nothing about a style is hard-coded here.
 // ?fmt = the frame format: 16x9 (1920×1080, the default), 9x16 (1080×1920), 1x1 (1080×1080); ?tall = 9x16 (older
 // name); ?rs=1 = full internal resolution. Where things go in each format: layout.js.
 const QS = new URLSearchParams(location.search), TALL = QS.has('tall');
@@ -9,11 +11,13 @@ const W = FMT_Q === '16x9' ? 1920 : 1080, H = FMT_Q === '9x16' ? 1920 : 1080;
 const RS = +(QS.get('rs') || PROJECT.renderScale || 1);   // internal render scale (composited back up to W×H)
 const BPM = PROJECT.bpm, BEAT = 60 / BPM, OFF = PROJECT.offset || 0, BOIL = 12, DUR = PROJECT.duration;
 const TAU = Math.PI * 2;
-const PAL = {
-  paper: '#F3EBDC', ink: '#2B2233', clay: '#D97757', clayDk: '#A84D33', clayLt: '#F2A283',
-  night: '#1F2550', indigo: '#2F3C7A', rose: '#E27A92', ochre: '#E8AA38', sap: '#6E9F58',
-  teal: '#3A9C98', violet: '#7B5CA8', cream: '#FFF5E2', sky: '#8EC3E6'
-};
+const STYLE = window.STYLE || {};
+// the palette: paper, ink and the named colours (Clawd's clay, the props' ochre, sap, teal…)
+const PAL = { paper: STYLE.paper, ink: STYLE.ink, ...(STYLE.palette || {}) };
+// which spring each kind of move uses: pop (things appearing), arrive, land (after a hop), letters
+const SPR = { pop: 'overshoot', arrive: 'settle', land: 'bouncy', letters: 'overshoot', ...(STYLE.springs || {}) };
+// lettering: fill, stroke (null = none), the offset ink shadow, the card's title and subtitle colours
+const LET = { fill: '#FFF5E2', stroke: PAL.ink, shadow: true, title: PAL.clay, sub: PAL.ink, ...(STYLE.letters || {}) };
 
 const clamp = (x, a = 0, b = 1) => Math.max(a, Math.min(b, x));
 const lerp = (a, b, x) => a + (b - a) * x;
@@ -143,7 +147,7 @@ function hop(t, t0, t1, h = 2, o = {}) {
     return { dy: -h * 4 * k * (1 - k), sq };
   }
   // landing: a squash on each contact that springs back through a slight stretch; the rebound is sqrt(reb) as long
-  const a = t - t1, reb = (o.land || 'bouncy') === 'bouncy' ? (o.rebound ?? .14) : 0, a1 = .07, rd = fl * Math.sqrt(reb);
+  const a = t - t1, reb = (o.land || SPR.land) === 'bouncy' ? (o.rebound ?? .14) : 0, a1 = .07, rd = fl * Math.sqrt(reb);
   const kick = x => x < 0 ? 0 : x < .04 ? ease(x / .04) : 1 - springK((x - .04) / .4, 'overshoot');
   let sq = m * kick(a), dy = 0;
   if (reb) {
@@ -197,6 +201,7 @@ function flash(k, col = '#FFFDF6') { if (k > .01) paint(rectPts(-60, -60, W + 12
 // is the one non-paint mark in the kit. It lands on what's painted so far, under anything painted after it, follows
 // the camera, and boils a little. Keep a = 1 on dark grounds; on light grounds it barely shows (as light would).
 function glow(x, y, r, col = '#FFC766', a = 1) {
+  a *= BR.glow;   // the pack's light: 1 in Watercolour, 0 in Ink (light on white paper only leaves a pale disc)
   if (a <= 0 || r < 1) return;
   flushBrush();
   const c = color(col), rr = r * (1 + jit(.03));
@@ -276,8 +281,39 @@ function centred(pts, draw) {
   const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
   push(); translate(cx, cy); draw(pts.map(([x, y]) => [x - cx, y - cy])); pop();
 }
+// How the pack paints a shape (style.json "brush"). Watercolour paints every shape as it is drawn. Ink keeps the line:
+// fills and hatching go, a wash fades to `tint` of its colour on the paper (a dark one stays solid ink: pupils, holes),
+// every outline and ink line is the pack's ink (mono), and a shape drawn without an outline gets a thin one
+// (outlineAll), so a rainbow or a flame doesn't vanish with its wash. Inside clawd() (KEEP > 0) shapes are painted as
+// drawn — his shape and colours are the brand; his outline still follows the pack through PAL.ink.
+const BR = { wash: true, fill: true, hatch: true, bleed: 1, texture: 1, tint: 1, mono: false, outlineAll: false, glow: 1, ...(STYLE.brush || {}) };
+const STYLED = !(BR.wash && BR.fill && BR.hatch && BR.bleed === 1 && BR.texture === 1 && BR.tint === 1 && !BR.mono && !BR.outlineAll);
+let KEEP = 0;
+// ---------- colour grammar (style.json "grammar", Ink): colour only by meaning ----------
+// A scene marks an element with a role: flow (arrows, what moves), problem, good (the good end). Everything drawn
+// inside withRole(role, fn) takes the role's colour for its lines and a `tint` of it for its washes; an element
+// without a role is the plain structure colour. A pack without a grammar (Watercolour) ignores roles entirely.
+const ROLES = ['flow', 'problem', 'good'];
+const GRAM = STYLE.grammar || null;
+let ROLE = null;
+const roleCol = r => (GRAM && ROLES.includes(r) && GRAM[r]) || null;
+function withRole(role, fn) { const prev = ROLE; if (roleCol(role)) ROLE = role; try { return fn(); } finally { ROLE = prev; } }
+const lumOf = c => { const v = parseInt(c.slice(1), 16); return (.299 * (v >> 16 & 255) + .587 * (v >> 8 & 255) + .114 * (v & 255)) / 255; };
+function styled(o) {
+  if (KEEP) return o;
+  const rc = roleCol(ROLE), q = { ...o };
+  if (!BR.fill) delete q.fill;
+  if (!BR.hatch) delete q.hatch;
+  if (q.fill && BR.bleed !== 1) q.bleed = (q.bleed ?? .1) * BR.bleed;
+  if (q.fill && BR.texture !== 1) q.tex = (q.tex ?? .4) * BR.texture;
+  if (q.wash && (!BR.wash || rc) && /^#[0-9a-f]{6}$/i.test(q.wash)) q.wash = lumOf(q.wash) < .3 ? PAL.ink : mixCol(PAL.paper, rc || q.wash, rc ? GRAM.tint : BR.tint);
+  if (q.ink !== null && (BR.mono || rc)) q.ink = rc || PAL.ink;
+  else if (q.ink === null && BR.outlineAll && (q.wash || q.fill)) { q.ink = rc || PAL.ink; q.sw = .5; }
+  return q;
+}
 function paint(pts, o = {}) { centred(pts, (P) => paintAt(P, o)); }
 function paintAt(pts, o) {
+  if (STYLED || ROLE) o = styled(o);
   if (o.wash || o.fill || o.hatch) {
     if (o.wash) brush.wash(o.wash, o.washOp ?? 255); else brush.noWash();
     if (o.fill) { brush.fill(o.fill, o.fillOp ?? 170); brush.fillBleed(o.bleed ?? .1); brush.fillTexture(o.tex ?? .4, o.border ?? .35); } else brush.noFill();
@@ -293,6 +329,7 @@ function paintAt(pts, o) {
   }
 }
 function inkLine(pts, sw = 1, col = PAL.ink, br = 'ink', curv = .5) {
+  if (!KEEP && (BR.mono || ROLE)) col = roleCol(ROLE) || PAL.ink;
   centred(pts, (P) => { brush.noFill(); brush.noWash(); brush.noHatch(); brush.set(br, col, sw); inkBoil(P, Q => brush.spline(Q, curv)); });
 }
 
@@ -309,12 +346,12 @@ function sfx(txt, x, y, size, color, age, o = {}) {
 }
 function drawLetters(c) {
   for (const L of LETTERS) {
-    const k = L.pop != null ? springK(L.pop, L.spring || 'overshoot') : 1; if (k <= .01) continue;
+    const k = L.pop != null ? springK(L.pop, L.spring || SPR.letters) : 1; if (k <= .01) continue;
     c.save(); c.translate(L.x, L.y); c.rotate(L.rot || 0); c.scale(k, k); c.globalAlpha = L.alpha ?? 1;
     c.font = L.font || `${L.size}px "Permanent Marker", "Comic Sans MS", cursive`;
     c.textAlign = L.align || 'center'; c.textBaseline = 'middle';
     if (L.stroke) { c.lineJoin = 'round'; c.lineWidth = L.size * .12; c.strokeStyle = L.stroke; c.strokeText(L.txt, 0, 0); }
-    if (L.ink !== false) { c.fillStyle = PAL.ink; c.fillText(L.txt, L.size * .045, L.size * .055); }
+    if (L.ink !== false && LET.shadow) { c.fillStyle = PAL.ink; c.fillText(L.txt, L.size * .045, L.size * .055); }
     c.fillStyle = L.color; c.fillText(L.txt, 0, 0);
     c.restore();
   }
@@ -339,30 +376,32 @@ function flushLetters() {
 
 // ---------- paper ----------
 function lcg(seed) { let s = seed; return () => (s = (s * 16807) % 2147483647) / 2147483647; }
+// The paper of the pack (style.json "texture"): a base colour, soft blotches, fibres.
 function makePaper() {
+  const X = STYLE.texture || {}, B = X.blotches || { n: 0 }, F = X.fibres || { n: 0 };
   const g = createGraphics(W, H); g.pixelDensity(1); const c = g.drawingContext, rnd = lcg(11);
   c.fillStyle = PAL.paper; c.fillRect(0, 0, W, H);
-  for (let i = 0; i < 70; i++) { const x = rnd() * W, y = rnd() * H, r = 120 + rnd() * 380, gr = c.createRadialGradient(x, y, 0, x, y, r), a = .045 * rnd(); gr.addColorStop(0, `rgba(160,125,80,${a})`); gr.addColorStop(1, 'rgba(160,125,80,0)'); c.fillStyle = gr; c.fillRect(x - r, y - r, 2 * r, 2 * r); }
+  for (let i = 0; i < B.n; i++) { const x = rnd() * W, y = rnd() * H, r = B.r0 + rnd() * B.dr, gr = c.createRadialGradient(x, y, 0, x, y, r), a = B.alpha * rnd(); gr.addColorStop(0, `rgba(${B.rgb},${a})`); gr.addColorStop(1, `rgba(${B.rgb},0)`); c.fillStyle = gr; c.fillRect(x - r, y - r, 2 * r, 2 * r); }
   c.lineWidth = 1;
-  for (let i = 0; i < 1400; i++) { const x = rnd() * W, y = rnd() * H, l = 6 + rnd() * 26, a = rnd() * TAU; c.strokeStyle = `rgba(110,88,60,${.035 + rnd() * .06})`; c.beginPath(); c.moveTo(x, y); c.quadraticCurveTo(x + Math.cos(a + .6) * l * .5, y + Math.sin(a + .6) * l * .5, x + Math.cos(a) * l, y + Math.sin(a) * l); c.stroke(); }
+  for (let i = 0; i < F.n; i++) { const x = rnd() * W, y = rnd() * H, l = 6 + rnd() * 26, a = rnd() * TAU; c.strokeStyle = `rgba(${F.rgb},${F.alpha0 + rnd() * F.alpha1})`; c.beginPath(); c.moveTo(x, y); c.quadraticCurveTo(x + Math.cos(a + .6) * l * .5, y + Math.sin(a + .6) * l * .5, x + Math.cos(a) * l, y + Math.sin(a) * l); c.stroke(); }
   return g;
 }
 // Static grain + vignette, multiplied over the painted frame so pigment sits "in" the paper.
 function makeGrain() {
+  const X = STYLE.texture || {}, G = X.grain || { density: 0, depth: 0 }, [t0, t1, t2] = G.tint || [0, 0, 0], V = X.vignette || { rgb: '0,0,0', alpha: 0 };
   const cv = document.createElement('canvas'); cv.width = W; cv.height = H; const c = cv.getContext('2d'), rnd = lcg(5);
   const id = c.createImageData(W, H), d = id.data;
-  for (let i = 0; i < d.length; i += 4) { const v = 255 - (rnd() < .55 ? rnd() * rnd() * 34 : 0); d[i] = v; d[i + 1] = v - 1; d[i + 2] = v - 3; d[i + 3] = 255; }
+  for (let i = 0; i < d.length; i += 4) { const v = 255 - (rnd() < G.density ? rnd() * rnd() * G.depth : 0); d[i] = v - t0; d[i + 1] = v - t1; d[i + 2] = v - t2; d[i + 3] = 255; }
   c.putImageData(id, 0, 0);
-  const g = c.createRadialGradient(W / 2, H / 2, H * .45, W / 2, H / 2, H * 1.05); g.addColorStop(0, 'rgba(255,255,255,0)'); g.addColorStop(1, 'rgba(120,95,70,.35)');
+  const g = c.createRadialGradient(W / 2, H / 2, H * .45, W / 2, H / 2, H * 1.05); g.addColorStop(0, 'rgba(255,255,255,0)'); g.addColorStop(1, `rgba(${V.rgb},${V.alpha})`);
   c.fillStyle = g; c.fillRect(0, 0, W, H);
   return cv;
 }
 
 // ---------- custom brushes ----------
+// ink (outlines), inkfine (small lines), dry (smears): the pack's own brushes (style.json "brushes")
 function defineBrushes() {
-  brush.add('ink', { type: 'default', weight: 5, scatter: .25, sharpness: .8, grain: 40, opacity: 235, spacing: .2, pressure: [1.15, .75], rotate: 'natural', noise: .15 });
-  brush.add('inkfine', { type: 'default', weight: 2.6, scatter: .15, sharpness: .85, grain: 40, opacity: 230, spacing: .2, pressure: [1.1, .8], rotate: 'natural', noise: .1 });
-  brush.add('dry', { type: 'default', weight: 14, scatter: 3, sharpness: .3, grain: 6, opacity: 90, spacing: .6, pressure: [1, .6], rotate: 'natural', noise: .4 });
+  for (const [name, b] of Object.entries(STYLE.brushes || {})) brush.add(name, b);
 }
 
 // ---------- frame ----------
@@ -379,6 +418,7 @@ function draw() {
   if (!window.ready) return;
   LETTERS = []; CAM = LAST_CAM = null;
   push(); scale(RS); translate(-W / 2, -H / 2);
+  ROLE = null; KEEP = 0;
   BOILP = boilParams(); BOILO = null; BOILN = Math.floor(T * BOILP.fps); CLAWD_N = 0; boilSeed('frame'); noiseSeed(77);
   image(paperG, 0, 0);
   drawWorld(T);

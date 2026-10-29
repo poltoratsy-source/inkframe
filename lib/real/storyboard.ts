@@ -2,6 +2,7 @@
 // (`claude -p` on this machine, see claude.ts); otherwise a plain template storyboard keeps the studio working.
 import type { StartSettings } from '../engine/types';
 import { COLOR_NAMES, MOODS, PROP_IDS, SETTINGS, TEMPLATES, cleanSpec, words, type PropId, type SceneSpec, type SettingId } from './scene-spec';
+import { ROLES, STYLE_PACKS, grammarOf, styleOf } from '../styles';
 
 /** `why`: one sentence on why this template shows the step best (the decision log); optional, Claude writes it. */
 export interface BoardScene { title: string; line: string; duration: number; spec: SceneSpec; why?: string }
@@ -21,13 +22,29 @@ export function splitDurations(total: number, n: number): number[] {
 const LANG = { ru: 'Russian', en: 'English', kk: 'Kazakh' } as const;
 const AUDIENCE = { kids: 'young children (5-8)', school: 'school kids (9-14)', adults: 'adults', clients: 'potential clients of a business' } as const;
 
-export function storyboardPrompt(s: StartSettings): string {
+/** The style part of every prompt: the pack's name and its STYLE.md (read on the server, lib/real/styles.ts). */
+function styleBlock(s: StartSettings, notes = ''): string {
+  const id = styleOf(s.style), pack = STYLE_PACKS[id];
+  return `STYLE: ${pack.name.en} — ${pack.line.en}.${notes ? `\nRules of this style (follow them):\n${notes}` : ''}`;
+}
+/** The extra fields a style with a colour grammar allows (Ink). */
+function roleFields(s: StartSettings): string {
+  if (!grammarOf(styleOf(s.style))) return '';
+  return `\n- "propRole", "captionRole", "titleRole", "left.role", "right.role": optional, one of ${ROLES.join(', ')} (see the style rules);
+  "labelRoles": optional, one role or null per label`;
+}
+const medium = (s: StartSettings) => (styleOf(s.style) === 'ink' ? 'ink-line' : 'watercolour');
+
+/** `notes` = the style pack's STYLE.md (lib/real/styles.ts styleNotes). */
+export function storyboardPrompt(s: StartSettings, notes = ''): string {
   const n = sceneCount(s.duration), per = splitDurations(s.duration, n);
   const ending = s.ending === 'codeword'
     ? 'The LAST scene is template "card": title = one short CODE WORD in capitals that sums up the cartoon (viewers type it in the comments), subtitle = a short call to write it in the comments; its line invites viewers to write the code word in the comments.'
     : s.ending === 'subscribe' ? 'The LAST scene is template "card": title = a short call to subscribe, subtitle = what they will get; its line asks viewers to subscribe.'
       : 'Do not use the "card" template.';
-  return `You write storyboards for Inkframe, a studio that paints short watercolour cartoons with a fixed set of scene templates.
+  return `You write storyboards for Inkframe, a studio that paints short ${medium(s)} cartoons with a fixed set of scene templates.
+
+${styleBlock(s, notes)}
 
 IDEA: ${s.idea}
 LENGTH: ${s.duration} seconds, exactly ${n} scenes (planned lengths in seconds: ${per.join(', ')}).
@@ -49,7 +66,7 @@ at most ${wordsFor(per[0])} words for a ${per[0]} s scene, natural spoken ${LANG
 - "propColor", "left.color", "right.color": optional, one of ${COLOR_NAMES.join(', ')}
 - "caption": optional big words at the top of the frame, at most 6 words (the key fact of the scene, not the whole line)
 - "labels": optional, object template only, up to 2 labels of 1-3 words
-- "pace": optional, slow | fast
+- "pace": optional, slow | fast${roleFields(s)}
 - "why" (next to "spec", not inside it): one short sentence in ${LANG[s.language]} — why this template and these props show
   this step best (it goes to the studio's decision log)
 
@@ -61,10 +78,11 @@ Reply with ONLY a JSON object, no markdown fences:
 {"title": "...", "scenes": [{"title": "...", "line": "...", "duration": ${per[0]}, "why": "...", "spec": {"template": "host", "setting": "sky", "mood": "happy", "prop": "sun", "caption": "..."}}, ...]}`;
 }
 
-export function editPrompt(s: StartSettings, scene: BoardScene, request: string): string {
-  return `You edit one scene of a short watercolour cartoon in Inkframe. Keep everything the request does not ask to change.
+export function editPrompt(s: StartSettings, scene: BoardScene, request: string, notes = ''): string {
+  return `You edit one scene of a short ${medium(s)} cartoon in Inkframe. Keep everything the request does not ask to change.
+${styleBlock(s, notes)}
 Language of line, caption and labels: ${LANG[s.language]}. The scene lasts about ${scene.duration} s, so the line has at most ${wordsFor(scene.duration) + 3} words.
-Allowed values: template ${TEMPLATES.join('|')}; setting ${SETTINGS.join('|')}; mood ${MOODS.join('|')}; prop ${PROP_IDS.join('|')}; color ${COLOR_NAMES.join('|')}; heroSize normal|big; pace slow|normal|fast.
+Allowed values: template ${TEMPLATES.join('|')}; setting ${SETTINGS.join('|')}; mood ${MOODS.join('|')}; prop ${PROP_IDS.join('|')}; color ${COLOR_NAMES.join('|')}; heroSize normal|big; pace slow|normal|fast${grammarOf(styleOf(s.style)) ? `; roles ${ROLES.join('|')}` : ''}.
 
 CURRENT SCENE:
 ${JSON.stringify(scene)}
@@ -75,13 +93,14 @@ Reply with ONLY the whole updated scene as JSON (same shape: {"title", "line", "
 }
 
 /** The whole storyboard sent back with the author's note (the script gate's "Вернуть с замечанием"). */
-export function revisePrompt(s: StartSettings, board: Storyboard, note: string): string {
+export function revisePrompt(s: StartSettings, board: Storyboard, note: string, notes = ''): string {
   const n = sceneCount(s.duration);
-  return `You rewrite the storyboard of a short watercolour cartoon in Inkframe after the author read it and sent it back with a note.
+  return `You rewrite the storyboard of a short ${medium(s)} cartoon in Inkframe after the author read it and sent it back with a note.
+${styleBlock(s, notes)}
 Do what the note asks; keep everything it does not mention. Same rules as before: language of every line, caption and label ${LANG[s.language]};
 about ${n} scenes (the note may ask for more or fewer, at most 12), total length about ${s.duration} s, each line short enough for its scene
 (a calm narrator says about 2 words per second).
-Allowed values: template ${TEMPLATES.join('|')}; setting ${SETTINGS.join('|')}; mood ${MOODS.join('|')}; prop ${PROP_IDS.join('|')}; color ${COLOR_NAMES.join('|')}; heroSize normal|big; pace slow|normal|fast.
+Allowed values: template ${TEMPLATES.join('|')}; setting ${SETTINGS.join('|')}; mood ${MOODS.join('|')}; prop ${PROP_IDS.join('|')}; color ${COLOR_NAMES.join('|')}; heroSize normal|big; pace slow|normal|fast${grammarOf(styleOf(s.style)) ? `; roles ${ROLES.join('|')}` : ''}.
 ${s.ending === 'none' ? 'Do not use the "card" template.' : 'Keep the final "card" scene unless the note says otherwise.'}
 
 CURRENT STORYBOARD:
@@ -176,8 +195,11 @@ const LINES = {
   },
 } as const;
 
+/** Without Claude. The style counts too: in Ink the question is the problem (red words), the steps flow (orange) and the
+ *  answer is the good end (blue prop); the end card's title is good by the grammar's default. */
 export function templateStoryboard(s: StartSettings): Storyboard {
   const L = s.language === 'en' ? LINES.en : LINES.ru, topic = topicOf(s.idea), code = codeWordOf(topic);
+  const ink = !!grammarOf(styleOf(s.style));
   const prop = PROP_HINTS.find(([re]) => re.test(s.idea))?.[1] ?? 'question';
   const setting = SETTING_HINTS.find(([re]) => re.test(s.idea))?.[1] ?? 'sky';
   const n = sceneCount(s.duration), per = splitDurations(s.duration, n), hero = s.hero === 'none' ? { hero: false } : {};
@@ -186,13 +208,13 @@ export function templateStoryboard(s: StartSettings): Storyboard {
   const WHY = s.language === 'en'
     ? { open: 'template storyboard: the host opens with the question', middle: 'template storyboard: close-ups and the host take turns', card: 'template storyboard: the end card with the code word' }
     : { open: 'раскадровка по шаблону: начинает ведущий с вопросом', middle: 'раскадровка по шаблону: крупный предмет и ведущий по очереди', card: 'раскадровка по шаблону: финальная карточка с кодовым словом' };
-  scenes.push({ title: L.titles[0], line: L.hello(topic), duration: per[0], why: WHY.open, spec: cleanSpec({ template: 'host', setting, mood: 'excited', mood2: 'thinking', caption: words(topic, 42), ...hero }) });
+  scenes.push({ title: L.titles[0], line: L.hello(topic), duration: per[0], why: WHY.open, spec: cleanSpec({ template: 'host', setting, mood: 'excited', mood2: 'thinking', caption: words(topic, 42), ...(ink && { captionRole: 'problem' }), ...hero }) });
   const middle = n - 1 - (withCard ? 1 : 0);
   for (let i = 0; i < middle; i++) {
     const last = i === middle - 1 && !withCard;
     scenes.push({
       title: L.titles[Math.min(1 + i, 4)], line: i === 0 ? L.look : L.steps[Math.min(i - 1, 2)], duration: per[1 + i], why: WHY.middle,
-      spec: cleanSpec({ template: i % 2 === 0 ? 'object' : 'host', setting, mood: last ? 'proud' : i % 2 ? 'idea' : 'thinking', prop, ...hero }),
+      spec: cleanSpec({ template: i % 2 === 0 ? 'object' : 'host', setting, mood: last ? 'proud' : i % 2 ? 'idea' : 'thinking', prop, ...(ink && { propRole: i === middle - 1 ? 'good' : 'flow' }), ...hero }),
     });
   }
   if (withCard) {

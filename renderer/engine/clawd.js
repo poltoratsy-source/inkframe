@@ -74,7 +74,11 @@ function clawd(x, y, u, o = {}) {
   rs('shadow');
   if (!o.noShadow) {
     const f = 1 - Math.min(.5, Math.abs(o.dy || 0) * .06), w = (V.R - V.L) / 10;
-    paint(ellPts(x, y + u * .15, u * 5.6 * f * w, u * f, 22), { fill: PAL.ink, fillOp: 90, bleed: .25, tex: .3, border: .1, ink: null });
+    if ((STYLE.clawd || {}).shadow === 'line') {   // a pack drawn in line only (Ink): two short ink strokes on the ground
+      const hw = u * 5.6 * f * w;
+      inkLine([[x - hw, y + u * .3], [x, y + u * .38], [x + hw, y + u * .3]], sw * .7, PAL.ink, 'inkfine', .5);
+      inkLine([[x - hw * .5, y + u * .75], [x, y + u * .78], [x + hw * .5, y + u * .75]], sw * .5, PAL.ink, 'inkfine', .5);
+    } else paint(ellPts(x, y + u * .15, u * 5.6 * f * w, u * f, 22), { fill: PAL.ink, fillOp: 90, bleed: .25, tex: .3, border: .1, ink: null });
   }
   if (sm > .05) smearTrail(x, y + dy, u, V, sm, o.smearDir ?? (o.flip ? -1 : 1), col);
 
@@ -642,3 +646,7 @@ function move(style, t, seed = 0) {
   return o;
 }
 function dancer(x, y, u, style, t, extra = {}) { clawd(x, y, u, { ...move(style, t, extra.seed || 0), ...extra }); }
+
+// A style pack that restyles shapes (Ink: line only, colour by meaning) leaves Clawd as he is: his shape and colours
+// are the brand. KEEP (core.js) makes paintAt paint his shapes as drawn; his outline follows the pack through PAL.ink.
+{ const asIs = clawd; clawd = function (...a) { KEEP++; try { return asIs.apply(this, a); } finally { KEEP--; } }; }

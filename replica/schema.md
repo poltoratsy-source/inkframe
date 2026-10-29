@@ -59,16 +59,23 @@ export interface Review {
   }[];
 }
 
-/** renderer/styles/<id>/style.json */
+/** renderer/styles/<id>/style.json (M7; lib/styles.ts has the full type and checkPack) */
 export interface StylePack {
-  id: string; name: { ru: string; en: string };
-  paper: string; ink: string; palette: Record<string, string>;
-  brush: { wash: boolean; hatch: boolean; bleed: number; texture: number };
-  boil: { fps: number; amp: number; inkOnly: boolean };
-  springs: 'settle' | 'overshoot' | 'bouncy' | 'soft';
-  grammar?: { structure: string; flow: string; problem: string; good: string };   // the Ink style
-  preview: string;                                                               // a still for the start screen
+  id: 'watercolor' | 'ink'; name: { ru: string; en: string }; line: { ru: string; en: string };
+  paper: string; ink: string; palette: Record<string, string>;          // clay / clayDk / clayLt are Clawd's and never change
+  texture: { blotches; fibres; grain; vignette };                        // the paper
+  brushes: Record<'ink' | 'inkfine' | 'dry', BrushParams>;
+  brush: { wash: boolean; fill: boolean; hatch: boolean; bleed: number; texture: number; tint: number; mono: boolean; outlineAll: boolean; glow: number };
+  boil: { fps: number; amp: number; inkOnly: boolean; hold: boolean; holdStill: boolean };
+  springs: { pop: Spring; arrive: Spring; land: Spring; letters: Spring };   // Spring = 'settle' | 'overshoot' | 'bouncy' | 'soft'
+  letters: { fill: string; stroke: string | null; shadow: boolean; title: string; sub: string };
+  grammar?: { structure: string; flow: string; problem: string; good: string; tint: number; defaults: { arrow?: Role; title?: Role } };   // Ink
+  clawd?: { shadow?: 'wash' | 'line' };
+  kit?: string;                                                          // e.g. kit.js, loaded after templates.js
+  speed: { cost: number };                                               // a frame against a Watercolour one (Ink 0.5)
+  preview: string;                                                       // public/demo/styles/<id>.jpg, a real frame
 }
+// SceneSpec (lib/real/scene-spec.ts) += propRole, captionRole, labelRoles[], titleRole, left.role, right.role: Role = 'flow' | 'problem' | 'good'
 
 /** renderer/mocap/catalog.json (milestone 9) */
 export interface MocapClip { name: string; category: 'move' | 'action' | 'pose' | 'gesture' | 'dance'; description: string; frames: number; fps: number; source: string; licence: string }
@@ -79,7 +86,7 @@ Additions to existing types (`lib/engine/types.ts`):
 ```ts
 ProjectStatus  += 'awaiting'
 ProjectState   += stages: Record<StageId, { status: StageStatus; version: number }>; styleId: string; gate?: { stage: StageId; version: number; summary: string }
-StartSettings  += styleId?: string            // format already exists ('16:9' | '9:16' | '1:1'); the real engine starts honouring it
+StartSettings.style: 'watercolor' | 'ink' (M7; unknown → watercolor)            // format already exists ('16:9' | '9:16' | '1:1'); the real engine starts honouring it
 EngineEvent    += { type: 'stage'; stage; status; version } | { type: 'gate'; stage; version; open: boolean; summary }
                 | { type: 'estimate'; estimate } | { type: 'decision'; decision } | { type: 'review'; review }
 StudioEngine   += approve(id, stage, version, note?) ; revise(id, stage, version, note)

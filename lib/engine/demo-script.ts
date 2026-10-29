@@ -92,7 +92,10 @@ export function buildWriteScript(p: ProjectState, c: DemoCatalog, speed = 1, o: 
   if (version === 1 && gated) {
     const d = (what: 'style' | 'voice' | 'music', chosen: string, reason: string) =>
       w.emit({ type: 'decision', decision: { at: new Date().toISOString(), stage: 'brief', what, chosen, alternatives: [], reason, confidence: 'high' } });
-    d('style', 'Акварель', 'задан на стартовом экране');
+    // the demo's frames are a ready-made watercolour cartoon: Ink is said honestly, not faked
+    if (s.style === 'ink') w.emit({ type: 'decision', decision: { at: new Date().toISOString(), stage: 'brief', what: 'style', chosen: 'Акварель (демо)',
+      alternatives: ['Тушь'], reason: 'в настройках «Тушь», но демо-ролик нарисован заранее акварелью; «Тушь» рисует настоящий движок', confidence: 'low' } });
+    else d('style', 'Акварель', 'задан на стартовом экране');
     d('voice', VOICE_NAMES[s.voice], 'из настроек');
     d('music', MUSIC_NAMES[s.music], 'из настроек');
     // the demo's frames are a ready-made horizontal cartoon: a vertical or square choice is said honestly, not faked

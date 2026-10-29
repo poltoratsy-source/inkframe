@@ -8,6 +8,9 @@
 //   5. build() paints every scene at 12 fps in the project's format — 1280×720, 720×1280 or 720×720 (settings.format,
 //      lib/formats.ts; scenes that didn't change come from the cache), then ffmpeg cuts them together with
 //      cross-fades, the voice over a ducked music bed and burned-in subtitles placed for that format.
+//   The style pack (settings.style: watercolor | ink, renderer/styles) goes everywhere a frame does: its STYLE.md into
+//   every prompt to Claude (or the template storyboard's roles), the stage scene (so key frames and clips are cached per
+//   style), the painter's page, the estimate (a pack's speed.cost) and the decision log.
 //   6. Every cut is checked before it is handed out (lib/real/review.ts → review.json): a FAIL keeps the MP4 off the
 //      screen (status back to `ready`, the log says what is wrong, scenes with broken pictures are repainted next time).
 // It emits the same events as DemoEngine, so the screens stay as they are. Projects live in INKFRAME_PROJECTS_DIR.
@@ -36,7 +39,7 @@ import type { ApproveOptions, EngineEvent, LogStep, ProjectState, ProjectSummary
 import { StageStore, readBudget, readGatePolicy, readSubtitles } from '../store/stages';
 import { GateError } from '../store/gate';
 import { STAGE_NAMES, approvedWord, type Approval, type BudgetPolicy, type Checkpoint, type Decision, type Estimate, type GatePolicy, type Review, type SceneNote } from '../store/types';
-import { MUSIC_NAMES, OPTIONS, STYLES, VOICE_NAMES } from '../options';
+import { MUSIC_NAMES, OPTIONS, VOICE_NAMES } from '../options';
 import { askClaude } from '../real/claude';
 import { Painter, rendererVersion, type FrameOptions } from '../real/painter';
 import { SR, decode, envelope, mixDown, music, peaks, place, tts, voiceId, wordsOf, writeWav, type TtsJob, type Word } from '../real/audio';
@@ -46,6 +49,8 @@ import { DARK_SETTINGS, TEMPLATES, cleanSpec, describe, words, type StageScene }
 import { reviewCrashed, reviewVideo, type ReviewPlan } from '../real/review';
 import { SpeedLog, estimate, type EstimateScene } from '../real/estimate';
 import { FORMATS, formatOf, sizeOf, type Format } from '../formats';
+import { STYLE_IDS, STYLE_PACKS, styleOf, type StyleId } from '../styles';
+import { loadPack, styleNotes } from '../real/styles';
 
 /** What the engine needs from the outside world; tests swap these for fakes. */
 export interface RealTools {
@@ -105,6 +110,7 @@ export class RealEngine implements StudioEngine {
   private subtitles: boolean;
   private speed: SpeedLog;
   private rendererVersion?: string;
+  private packChecked = new Map<StyleId, string | undefined>();
   /** after Claude fails to answer, skip it for a while instead of making every step wait for the timeout */
   private claudeDownUntil = 0;
 
@@ -301,7 +307,7 @@ export class RealEngine implements StudioEngine {
   private async reviseWhole(e: Entry, note: string): Promise<{ board: Storyboard; how: string; byClaude: boolean }> {
     const s = e.state.settings;
     const current: Storyboard = { title: e.state.title, by: e.storyBy ?? 'template', scenes: e.scenes.map(r => ({ ...r.board, duration: r.planned })) };
-    const reply = await this.claude(revisePrompt(s, current, note), e);
+    const reply = await this.claude(revisePrompt(s, current, note, styleNotes(this.style(e))), e);
     if (reply) {
       try { return { board: cleanStoryboard(extractJson(reply), s), how: 'Claude учёл замечание', byClaude: true }; }
       catch (err) { console.warn(`[inkframe] Claude's rewrite was unusable: ${(err as Error).message}`); }
@@ -423,7 +429,7 @@ export class RealEngine implements StudioEngine {
   /** One scene changed by a note: Claude, or the edit rules. `by: 'none'` = not understood, nothing changed. */
   private async editBoard(e: Entry, scene: BoardScene, request: string): Promise<{ scene: BoardScene; by: 'claude' | 'rules' | 'none'; voice?: boolean }> {
     const s = e.state.settings;
-    const reply = await this.claude(editPrompt(s, scene, request), e);
+    const reply = await this.claude(editPrompt(s, scene, request, styleNotes(this.style(e))), e);
     if (reply) {
       try {
         const got = cleanScene(extractJson(reply), scene.duration, s);
@@ -516,7 +522,7 @@ export class RealEngine implements StudioEngine {
 
   private async storyboard(e: Entry): Promise<Storyboard> {
     const s = e.state.settings;
-    const reply = await this.claude(storyboardPrompt(s), e);
+    const reply = await this.claude(storyboardPrompt(s, styleNotes(this.style(e))), e);
     if (reply) {
       try { return cleanStoryboard(extractJson(reply), s); }
       catch (err) { console.warn(`[inkframe] Claude's storyboard was unusable: ${(err as Error).message}`); }
@@ -592,9 +598,18 @@ export class RealEngine implements StudioEngine {
 
   // ---------- drawing ----------
   private draftTimes(dur: number) { const n = Math.max(2, Math.round(dur * this.draftFps)); return Array.from({ length: n }, (_, k) => round3(k / this.draftFps)); }
-  private stage(e: Entry, r: RScene, extra: Partial<StageScene> = {}): StageScene { return { ...r.board.spec, duration: r.board.duration, voice: r.env, format: this.format(e), ...extra }; }
+  private stage(e: Entry, r: RScene, extra: Partial<StageScene> = {}): StageScene { return { ...r.board.spec, duration: r.board.duration, voice: r.env, format: this.format(e), style: this.style(e), ...extra }; }
   /** The project's frame format (settings.format; anything unknown is 16:9). */
   private format(e: Entry): Format { return formatOf(e.state.settings.format); }
+  /** The project's style pack (settings.style); unknown, or a pack whose files don't pass the check → Watercolour. */
+  private style(e: Entry): StyleId { const id = styleOf(e.state.settings.style); return this.packProblem(id) ? 'watercolor' : id; }
+  /** What is wrong with a pack's files on disk (checked once per engine), or undefined. */
+  private packProblem(id: StyleId): string | undefined {
+    if (!this.packChecked.has(id)) { try { loadPack(id); this.packChecked.set(id, undefined); } catch (err) { this.packChecked.set(id, (err as Error).message); } }
+    return this.packChecked.get(id);
+  }
+  /** What a frame of this project costs against a 16:9 Watercolour one: the format's cost × the pack's. */
+  private cost(e: Entry) { return FORMATS[this.format(e)].cost * STYLE_PACKS[this.style(e)].speed.cost; }
   /** Draft and key frames: 640×360, 360×640 or 360×360. */
   private draft(e: Entry): FrameOptions { return { ...DRAFT, width: sizeOf(this.format(e), DRAFT_SHORT).w }; }
   /** The MP4's size: finalWidth is the 16:9 width (1280), the other formats keep its short side (720). */
@@ -648,7 +663,7 @@ export class RealEngine implements StudioEngine {
     }
     if (request) {
       let byClaude = false;
-      const reply = await this.claude(editPrompt(s, next, request), e);
+      const reply = await this.claude(editPrompt(s, next, request, styleNotes(this.style(e))), e);
       if (reply) {
         try {
           const got = cleanScene(extractJson(reply), next.duration, s);
@@ -711,8 +726,8 @@ export class RealEngine implements StudioEngine {
       const jobs = e.scenes.map((r, i) => {
         const len = r.board.duration + (i < e.scenes.length - 1 ? OVERLAP : 0), stage = this.stage(e, r, { fast: process.env.INKFRAME_WATERCOLOR !== '1' });
         // the renderer's version is in the key: after a change to renderer/** every clip is painted again; the format
-        // (in the stage scene too) and the size keep a 9:16 clip from ever standing in for a 16:9 one
-        const key = hash(JSON.stringify([stage, len, w, h, fmt, this.rendererVersion ??= rendererVersion()])).slice(0, 12);
+        // and the style (in the stage scene too) and the size keep a 9:16 or an Ink clip from ever standing in for another
+        const key = hash(JSON.stringify([stage, len, w, h, fmt, stage.style, this.rendererVersion ??= rendererVersion()])).slice(0, 12);
         return { i, len, stage, clip: `clips/s${i + 1}-${key}.mp4`, frames: Math.round(len * FINAL_FPS) };
       });
       const todo = jobs.filter(j => !existsSync(join(e.dir, j.clip))), all = todo.reduce((a, j) => a + j.frames, 0) || 1;
@@ -814,9 +829,10 @@ export class RealEngine implements StudioEngine {
   // ---------- estimates and decisions ----------
   /** Times one painter call from its first frame to its last: the steady speed, without the browser's start-up and
    *  page load (they come before the first frame). One worker's s/frame = interval per frame × workers in parallel. */
-  /** Speed is kept per 16:9 frame: a frame of a cheaper format (1:1 ≈ 0.7 of the work) is counted as `cost` of one. */
+  /** Speed is kept per 16:9 Watercolour frame: a frame of a cheaper format (1:1 ≈ 0.7 of the work) or pack is counted
+   *  as `cost` of one (lib/formats.ts, the pack's speed.cost). */
   private clock(kind: 'draft' | 'final', e: Entry) {
-    const start = Date.now(), cost = FORMATS[this.format(e)].cost;
+    const start = Date.now(), cost = this.cost(e);
     let first = 0, last = 0, n = 0;
     return {
       frame: () => { last = Date.now(); if (!n++) first = last; },
@@ -829,9 +845,10 @@ export class RealEngine implements StudioEngine {
   }
 
 
-  /** This server's speed for this project's format: a 1:1 frame costs ≈ 0.7 of a 16:9 one (lib/formats.ts). */
+  /** This server's speed for this project's format and style: a 1:1 frame costs ≈ 0.7 of a 16:9 one (lib/formats.ts),
+   *  an Ink frame its pack's speed.cost of a Watercolour one. */
   private formatSpeed(e: Entry) {
-    const sp = this.speed.speed(), cost = FORMATS[this.format(e)].cost;
+    const sp = this.speed.speed(), cost = this.cost(e);
     return cost === 1 ? sp : { ...sp, draft: sp.draft * cost, final: sp.final * cost };
   }
 
@@ -898,9 +915,13 @@ export class RealEngine implements StudioEngine {
   private settingsDecisions(e: Entry) {
     const s = e.state.settings;
     const avail = <T,>(list: { value: T; label: string; soon?: boolean }[], v: T) => list.filter(x => !x.soon && x.value !== v).map(x => x.label);
-    const style = STYLES.find(x => x.id === s.style);
-    this.decide(e, { stage: 'brief', what: 'style', chosen: style?.title ?? s.style, alternatives: STYLES.filter(x => x.id !== s.style).map(x => x.title + (x.soon ? ' (скоро)' : '')),
-      reason: s.style === 'watercolor' ? 'задан на стартовом экране' : 'задан на стартовом экране, но этот движок пока рисует только акварелью', confidence: s.style === 'watercolor' ? 'high' : 'low' });
+    const asked = styleOf(s.style), style = this.style(e), pack = STYLE_PACKS[style], cost = pack.speed.cost, problem = this.packProblem(asked);
+    this.decide(e, { stage: 'brief', what: 'style', chosen: pack.name.ru, alternatives: STYLE_IDS.filter(x => x !== style).map(x => STYLE_PACKS[x].name.ru),
+      reason: asked !== s.style ? `в настройках «${s.style}» — такого стиля нет, рисую акварелью`
+        : problem ? `«${STYLE_PACKS[asked].name.ru}» не прошёл проверку (${problem.slice(0, 120)}) — рисую акварелью`
+        : `из настроек; ${pack.line.ru.toLowerCase()}${pack.grammar ? '; цвет по смыслу: оранжевый — поток, красный — проблема, синий — хороший итог' : ''}`
+          + `${cost !== 1 ? `; кадр ≈ ${Math.round(cost * 100)} % времени акварели` : ''}`,
+      confidence: asked === s.style && !problem ? 'high' : 'low' });
     this.decide(e, { stage: 'brief', what: 'voice', chosen: VOICE_NAMES[s.voice], alternatives: avail(OPTIONS.voice, s.voice),
       reason: s.voice === 'none' ? 'без голоса — так задано' : `из настроек; голос edge-tts ${voiceId(s.language, s.voice)}`, confidence: 'high' });
     this.decide(e, { stage: 'brief', what: 'music', chosen: MUSIC_NAMES[s.music], alternatives: avail(OPTIONS.music, s.music),

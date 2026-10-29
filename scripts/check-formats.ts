@@ -1,8 +1,14 @@
 // Frames of every template and several settings in one format, for a look and for before/after comparisons:
-//   node --import tsx scripts/check-formats.ts <16:9|9:16|1:1> sheet <out.jpg> [--watercolor] [--safe] [--rs=.5]
+//   node --import tsx scripts/check-formats.ts <16:9|9:16|1:1> sheet <out.jpg> [--watercolor] [--safe] [--rs=.5] [--style=ink]
 //   node --import tsx scripts/check-formats.ts <format> save <dir>       every frame as a full-size PNG (the "before")
 //   node --import tsx scripts/check-formats.ts <format> compare <dir>    the same frames again, compared pixel by pixel
+//   node --import tsx scripts/check-formats.ts <format> still <out.jpg> --item=5 [--style=ink]   one frame, 640 px wide
+//     (the start screen's style previews: public/demo/styles/<style>.jpg = 16:9, item 5, each style)
 // sheet: a contact sheet, each cell labelled template · setting · t; --safe draws the format's safe area (layout.js).
+// --style = the style pack (renderer/styles/<id>, default watercolor); every mode prints each frame's share of bare
+// paper (pixels within a few levels of the pack's paper colour) — the Ink pack wants at least 35 %.
+// Some scenes mark elements with colour-grammar roles: a pack without a grammar (Watercolour) must ignore them, so its
+// frames still compare equal to ones saved before roles existed.
 // compare uses the tolerance of check-determinism.ts (SwiftShader repaints a frame with tiny differences): a frame
 // passes when ≤ 0.1 % of its channel values differ, by ≤ 32 levels. Exit code 1 if any frame differs beyond it.
 // The PNG folder must be one Chrome may read (a snap Chrome can't read /tmp): use one under projects/.
@@ -12,6 +18,7 @@ import { pathToFileURL } from 'node:url';
 import puppeteer from 'puppeteer-core';
 import { findChrome } from '../lib/real/painter.ts';
 import { FORMATS, type Format } from '../lib/formats.ts';
+import { styleOf } from '../lib/styles.ts';
 import type { StageScene } from '../lib/real/scene-spec.ts';
 
 const [fmtArg = '16:9', mode = 'sheet', target = 'projects/check/formats.jpg', ...rest] = process.argv.slice(2);
@@ -19,11 +26,12 @@ const format = fmtArg as Format;
 if (!FORMATS[format]) throw new Error(`unknown format ${fmtArg}`);
 const watercolor = rest.includes('--watercolor'), safe = rest.includes('--safe');
 const rs = +(rest.find(a => a.startsWith('--rs='))?.slice(5) ?? .5);
+const style = styleOf(rest.find(a => a.startsWith('--style='))?.slice(8));
 const voice = '0000000033667755443300000000336677554433000000003366775544330000'.repeat(4);
 const S = (s: Omit<StageScene, 'duration' | 'voice'> & { duration?: number }): StageScene => ({ duration: 5, voice, ...s });
 const host = S({ template: 'host', setting: 'sky', mood: 'happy', prop: 'sun', caption: 'Почему небо голубое?' });
 const object = S({ template: 'object', setting: 'sky', mood: 'thinking', prop: 'prism', caption: 'Белый свет — это все цвета', labels: ['белый свет', 'радуга'] });
-const compare = S({ template: 'compare', setting: 'sky', mood: 'surprised', caption: 'Синий рассеивается сильнее', left: { prop: 'wave', color: 'blue', caption: 'синий: короткие' }, right: { prop: 'wave', color: 'red', caption: 'красный: длинные' } });
+const compare = S({ template: 'compare', setting: 'sky', mood: 'surprised', caption: 'Синий рассеивается сильнее', left: { prop: 'wave', color: 'blue', caption: 'синий: короткие', role: 'good' }, right: { prop: 'wave', color: 'red', caption: 'красный: длинные' } });
 const card = S({ template: 'card', setting: 'sunset', mood: 'excited', title: 'НЕБО', subtitle: 'кодовое слово — пиши в комментарии' });
 /** [scene, t, label]: the four templates through their moves, then the settings (backgrounds) */
 const ITEMS: [StageScene, number][] = [
@@ -32,16 +40,16 @@ const ITEMS: [StageScene, number][] = [
   [compare, .8], [compare, 2.4], [compare, 4.2],
   [card, .4], [card, 1.5], [card, 3.5],
   [S({ template: 'host', setting: 'room', mood: 'excited', caption: 'Привет!' }), 2.2],
-  [S({ template: 'host', setting: 'night', mood: 'hopeful', prop: 'star', caption: 'Ночью видно звёзды' }), 2.2],
+  [S({ template: 'host', setting: 'night', mood: 'hopeful', prop: 'star', caption: 'Ночью видно звёзды', propRole: 'good' }), 2.2],
   [S({ template: 'host', setting: 'sea', mood: 'playful', prop: 'fish', heroSize: 'big' }), 2.2],
   [S({ template: 'object', setting: 'space', mood: 'starstruck', prop: 'planet', caption: 'Сатурн', labels: ['кольца', 'шар из газа'] }), 4.2],
-  [S({ template: 'object', setting: 'board', mood: 'idea', prop: 'atom', caption: 'Атом', labels: ['ядро'] }), 3.5],
-  [S({ template: 'compare', setting: 'meadow', mood: 'love', left: { prop: 'tree', caption: 'дерево' }, right: { prop: 'flower', color: 'pink', caption: 'цветок' } }), 4.2],
+  [S({ template: 'object', setting: 'board', mood: 'idea', prop: 'atom', caption: 'Атом', labels: ['ядро'], labelRoles: ['problem'] }), 3.5],
+  [S({ template: 'compare', setting: 'meadow', mood: 'love', left: { prop: 'tree', caption: 'дерево', role: 'problem' }, right: { prop: 'flower', color: 'pink', caption: 'цветок', role: 'good' } }), 4.2],
   [S({ template: 'host', setting: 'sunset', mood: 'proud', prop: 'rocket', hero: false, caption: 'Без героя' }), 2.2],
   [S({ template: 'card', setting: 'space', mood: 'cool', title: 'КОСМОС', subtitle: 'напиши слово в комментариях' }), 2.4],
   [S({ template: 'card', setting: 'meadow', mood: 'love', title: 'ЛЕПЕСТОК' }), 2.4],
 ];
-const scenes = ITEMS.map(([s, t]) => [{ ...s, format, fast: !watercolor }, t] as const);
+const scenes = ITEMS.map(([s, t]) => [{ ...s, format, fast: !watercolor, ...(style !== 'watercolor' && { style }) }, t] as const);
 const label = (s: StageScene, t: number) => `${s.template} · ${s.setting}${s.hero === false ? ' · без героя' : ''} · ${t}s`;
 
 const browser = await puppeteer.launch({
@@ -52,12 +60,20 @@ const browser = await puppeteer.launch({
 const page = await browser.newPage();
 page.on('pageerror', e => console.error('[stage]', (e as Error).message));
 page.on('console', m => { if (m.type() === 'error') console.error('[stage]', m.text()); });
-await page.goto(`${pathToFileURL(resolve('renderer/stage.html')).href}?render&rs=${rs}&fmt=${FORMATS[format].query}`);
+await page.goto(`${pathToFileURL(resolve('renderer/stage.html')).href}?render&rs=${rs}&fmt=${FORMATS[format].query}&style=${style}`);
 await page.waitForFunction('window.ready === true', { timeout: 60000 });
 // the page code is a string, so the TS loader's helpers never end up in the page
 const run = <T>(code: string) => page.evaluate(code) as Promise<T>;
 const t0 = Date.now();
 let bad = 0;
+// the share of the frame that is bare paper: pixels within 14 levels of the paper colour on every channel
+const bare = () => run<number>(`(() => {
+  const c = document.getElementById('out'), d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data, p = parseInt(PAL.paper.slice(1), 16);
+  const r = p >> 16 & 255, g = p >> 8 & 255, b = p & 255; let n = 0;
+  for (let i = 0; i < d.length; i += 16) if (Math.abs(d[i] - r) < 14 && Math.abs(d[i + 1] - g) < 14 && Math.abs(d[i + 2] - b) < 14) n++;
+  return n / (d.length / 16);
+})()`);
+const bares: number[] = [];
 
 if (mode === 'sheet') {
   const cols = format === '16:9' ? 3 : format === '9:16' ? 6 : 4, cw = format === '16:9' ? 560 : format === '9:16' ? 300 : 400;
@@ -69,6 +85,9 @@ if (mode === 'sheet') {
   for (const [i, [s, t]] of scenes.entries()) {
     await run(`(async () => {
       window.SCENE = ${JSON.stringify(s)}; await renderAt(${t});
+    })()`);
+    bares.push(await bare());
+    await run(`(async () => {
       const [cw, ch] = window.__cell, c = window.__sheet.getContext('2d'), x = (${i} % ${cols}) * cw, y = Math.floor(${i} / ${cols}) * ch;
       c.drawImage(document.getElementById('out'), x, y, cw, ch);
       if (${safe} && typeof LAYOUT !== 'undefined') {
@@ -85,7 +104,19 @@ if (mode === 'sheet') {
   const url = await run<string>(`window.__sheet.toDataURL('image/jpeg', .86)`);
   mkdirSync(resolve(target, '..'), { recursive: true });
   writeFileSync(target, Buffer.from(url.slice(url.indexOf(',') + 1), 'base64'));
-  console.log(`${format}: ${scenes.length} frames in ${((Date.now() - t0) / 1000).toFixed(0)} s → ${target}`);
+  console.log(`${format} · ${style}: ${scenes.length} frames in ${((Date.now() - t0) / 1000).toFixed(0)} s → ${target}`);
+  console.log(`bare paper: min ${(Math.min(...bares) * 100).toFixed(0)} %, median ${(bares.slice().sort((a, b) => a - b)[bares.length >> 1] * 100).toFixed(0)} %; ` +
+    scenes.map(([s, t], i) => `${label(s, t)} ${(bares[i] * 100).toFixed(0)} %`).join('; '));
+} else if (mode === 'still') {
+  const [s, t] = scenes[+(rest.find(a => a.startsWith('--item='))?.slice(7) ?? 5)];
+  const url = await run<string>(`(async () => {
+    window.SCENE = ${JSON.stringify(s)}; await renderAt(${t});
+    const out = document.getElementById('out'), c = document.createElement('canvas'); c.width = 640; c.height = Math.round(640 * out.height / out.width);
+    const x = c.getContext('2d'); x.imageSmoothingQuality = 'high'; x.drawImage(out, 0, 0, c.width, c.height); return c.toDataURL('image/jpeg', .86);
+  })()`);
+  mkdirSync(resolve(target, '..'), { recursive: true });
+  writeFileSync(target, Buffer.from(url.slice(url.indexOf(',') + 1), 'base64'));
+  console.log(`${label(s, t)} · ${style} → ${target}`);
 } else if (mode === 'save' || mode === 'compare') {
   mkdirSync(target, { recursive: true });
   for (const [i, [s, t]] of scenes.entries()) {

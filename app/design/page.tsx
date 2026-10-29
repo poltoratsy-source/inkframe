@@ -91,9 +91,9 @@ export default function DesignPage() {
           </Box>
           <Box title="Стиль рисунка">
             <StylePicker value={style} onChange={setStyle} styles={[
-              { id: 'watercolor', name: 'Акварель', line: 'Мягкие заливки на бумаге, как сейчас', preview: asset('demo/frames/s1-3.jpg') },
-              { id: 'ink', name: 'Тушь', line: 'Чёрная линия на белом, цвет только по делу', preview: asset('demo/frames/s3-2-sketch.jpg') },
-              { id: 'chalk', name: 'Мел', line: 'Доска и мел', unavailable: 'Будет позже' },
+              { id: 'watercolor', name: 'Акварель', line: 'Мягкие заливки на тёплой бумаге, тушь по контуру', preview: asset('demo/styles/watercolor.jpg') },
+              { id: 'ink', name: 'Тушь', line: 'Чёрная линия на белом, цвет только по делу', preview: asset('demo/styles/ink.jpg') },
+              { id: 'example', name: 'Недоступный стиль', line: 'Так выглядит карточка, которую нельзя выбрать', unavailable: 'Пример состояния «недоступен»' },
             ]} />
           </Box>
         </aside>

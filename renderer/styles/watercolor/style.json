@@ -1,0 +1,29 @@
+{
+  "id": "watercolor",
+  "name": { "ru": "Акварель", "en": "Watercolour" },
+  "line": { "ru": "Мягкие заливки на тёплой бумаге, тушь по контуру", "en": "Soft washes on warm paper, ink outlines" },
+  "paper": "#F3EBDC",
+  "ink": "#2B2233",
+  "palette": {
+    "clay": "#D97757", "clayDk": "#A84D33", "clayLt": "#F2A283",
+    "night": "#1F2550", "indigo": "#2F3C7A", "rose": "#E27A92", "ochre": "#E8AA38", "sap": "#6E9F58",
+    "teal": "#3A9C98", "violet": "#7B5CA8", "cream": "#FFF5E2", "sky": "#8EC3E6"
+  },
+  "texture": {
+    "blotches": { "n": 70, "rgb": "160,125,80", "alpha": 0.045, "r0": 120, "dr": 380 },
+    "fibres": { "n": 1400, "rgb": "110,88,60", "alpha0": 0.035, "alpha1": 0.06 },
+    "grain": { "density": 0.55, "depth": 34, "tint": [0, 1, 3] },
+    "vignette": { "rgb": "120,95,70", "alpha": 0.35 }
+  },
+  "brushes": {
+    "ink": { "type": "default", "weight": 5, "scatter": 0.25, "sharpness": 0.8, "grain": 40, "opacity": 235, "spacing": 0.2, "pressure": [1.15, 0.75], "rotate": "natural", "noise": 0.15 },
+    "inkfine": { "type": "default", "weight": 2.6, "scatter": 0.15, "sharpness": 0.85, "grain": 40, "opacity": 230, "spacing": 0.2, "pressure": [1.1, 0.8], "rotate": "natural", "noise": 0.1 },
+    "dry": { "type": "default", "weight": 14, "scatter": 3, "sharpness": 0.3, "grain": 6, "opacity": 90, "spacing": 0.6, "pressure": [1, 0.6], "rotate": "natural", "noise": 0.4 }
+  },
+  "brush": { "wash": true, "fill": true, "hatch": true, "bleed": 1, "texture": 1, "tint": 1, "mono": false, "outlineAll": false, "glow": 1 },
+  "boil": { "fps": 12, "amp": 1, "inkOnly": false, "hold": false, "holdStill": false },
+  "springs": { "pop": "overshoot", "arrive": "settle", "land": "bouncy", "letters": "overshoot" },
+  "letters": { "fill": "#FFF5E2", "stroke": "#2B2233", "shadow": true, "title": "#D97757", "sub": "#2B2233" },
+  "speed": { "cost": 1 },
+  "preview": "demo/styles/watercolor.jpg"
+}

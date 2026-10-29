@@ -1,0 +1,32 @@
+{
+  "id": "ink",
+  "name": { "ru": "Тушь", "en": "Ink" },
+  "line": { "ru": "Чёрная линия на белом, цвет только по делу", "en": "Black line on white, colour only where it means something" },
+  "paper": "#FBFAF7",
+  "ink": "#141414",
+  "palette": {
+    "clay": "#D97757", "clayDk": "#A84D33", "clayLt": "#F2A283",
+    "night": "#1F2550", "indigo": "#2F3C7A", "rose": "#E27A92", "ochre": "#E8AA38", "sap": "#6E9F58",
+    "teal": "#3A9C98", "violet": "#7B5CA8", "cream": "#FFF5E2", "sky": "#8EC3E6"
+  },
+  "texture": {
+    "blotches": { "n": 24, "rgb": "120,120,128", "alpha": 0.02, "r0": 160, "dr": 260 },
+    "fibres": { "n": 900, "rgb": "96,96,104", "alpha0": 0.02, "alpha1": 0.035 },
+    "grain": { "density": 0.45, "depth": 16, "tint": [0, 0, 1] },
+    "vignette": { "rgb": "96,96,104", "alpha": 0.07 }
+  },
+  "brushes": {
+    "ink": { "type": "default", "weight": 5.4, "scatter": 0.12, "sharpness": 0.92, "grain": 18, "opacity": 250, "spacing": 0.18, "pressure": [1.25, 0.7], "rotate": "natural", "noise": 0.1 },
+    "inkfine": { "type": "default", "weight": 2.8, "scatter": 0.08, "sharpness": 0.95, "grain": 16, "opacity": 245, "spacing": 0.18, "pressure": [1.15, 0.75], "rotate": "natural", "noise": 0.08 },
+    "dry": { "type": "default", "weight": 14, "scatter": 3, "sharpness": 0.3, "grain": 6, "opacity": 90, "spacing": 0.6, "pressure": [1, 0.6], "rotate": "natural", "noise": 0.4 }
+  },
+  "brush": { "wash": false, "fill": false, "hatch": false, "bleed": 1, "texture": 1, "tint": 0.05, "mono": true, "outlineAll": true, "glow": 0 },
+  "boil": { "fps": 10, "amp": 1.5, "inkOnly": true, "hold": false, "holdStill": false },
+  "springs": { "pop": "settle", "arrive": "settle", "land": "bouncy", "letters": "settle" },
+  "letters": { "fill": "#141414", "stroke": null, "shadow": false, "title": "#2F6DB5", "sub": "#141414" },
+  "grammar": { "structure": "#141414", "flow": "#E8742A", "problem": "#C8372D", "good": "#2F6DB5", "tint": 0.16, "defaults": { "arrow": "flow", "title": "good" } },
+  "clawd": { "shadow": "line" },
+  "kit": "kit.js",
+  "speed": { "cost": 0.5 },
+  "preview": "demo/styles/ink.jpg"
+}

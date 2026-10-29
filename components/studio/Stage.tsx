@@ -36,7 +36,7 @@ export function Stage({ project: p, selected, error }: { project: ProjectState; 
 
   return (
     <section className="flex min-h-0 min-w-0 flex-col gap-2.5 px-5 py-4">
-      <div className="relative aspect-video max-h-[calc(100%-36px)] w-full overflow-hidden rounded-xl border border-ink-500 bg-[#f3ebdc]">
+      <div className={`relative aspect-video max-h-[calc(100%-36px)] w-full overflow-hidden rounded-xl border border-ink-500 ${p.engine === 'real' && p.settings.style === 'ink' ? 'bg-[#fbfaf7]' : 'bg-[#f3ebdc]'}`}>
         {live && layers.cur && <>
           {layers.prev && <img src={layers.prev} alt="" className={`absolute inset-0 size-full ${fit}`} style={lookStyle(sc!.look, !layers.prev.includes('-sketch'))} />}
           <div key={layers.cur} className="reveal absolute inset-0" style={{ ['--pen-ms' as string]: color ? '560ms' : '420ms' }}>
@@ -53,8 +53,10 @@ export function Stage({ project: p, selected, error }: { project: ProjectState; 
         )}
         <div className="absolute top-3.5 left-3.5 rounded-lg bg-black/65 px-2.5 py-1.5 text-[13px]">{tag}</div>
         {p.format && p.format !== '16:9' && <div className="absolute bottom-3.5 left-3.5 rounded-lg bg-black/65 px-2 py-1 text-[12px] text-mist-200" title="формат кадра">{p.format}</div>}
-        {p.engine === 'demo' && p.settings.format !== '16:9' && (
-          <div className="absolute bottom-3.5 left-3.5 max-w-[45%] rounded-lg bg-black/70 px-2 py-1 text-[12px] text-mist-200">демо-ролик горизонтальный: {p.settings.format} рисует настоящий движок</div>
+        {p.engine === 'demo' && (p.settings.format !== '16:9' || p.settings.style === 'ink') && (
+          <div className="absolute bottom-3.5 left-3.5 max-w-[45%] rounded-lg bg-black/70 px-2 py-1 text-[12px] text-mist-200">
+            {[p.settings.format !== '16:9' && `демо-ролик горизонтальный: ${p.settings.format}`, p.settings.style === 'ink' && 'демо-ролик в акварели: «Тушь»'].filter(Boolean).join('; ')} рисует настоящий движок
+          </div>
         )}
         {pill && <div className={`absolute top-3.5 right-3.5 rounded-lg px-2.5 py-1.5 text-[13px] font-bold ${sc?.status === 'done' ? 'bg-ok-bg text-ok' : 'bg-pen/95 text-pen-ink'}`}>{pill}</div>}
         {sc && <div className="absolute bottom-[18px] left-1/2 max-w-[78%] -translate-x-1/2 rounded-lg bg-black/70 px-3.5 py-2 text-center text-[15px]">«{sc.line}»</div>}

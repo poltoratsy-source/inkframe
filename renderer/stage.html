@@ -5,7 +5,8 @@
 <title>Inkframe stage</title>
 <!-- One painted scene, drawn from window.SCENE (see lib/real/scene-spec.ts). The renderer (lib/real/painter.ts) sets
      SCENE before every frame and calls window.renderScaled(t, width, quality). Nothing here touches the network.
-     ?fmt=16x9 | 9x16 | 1x1 picks the frame format (layout.js); a page paints one format, the painter keeps a page per format. -->
+     ?fmt=16x9 | 9x16 | 1x1 picks the frame format (layout.js); a page paints one format, the painter keeps a page per format.
+     ?style=watercolor | ink picks the style pack (styles/<id>/style.json + its kit.js); a page paints one style. -->
 <style>
   @font-face { font-family: 'Caveat'; src: url('fonts/Caveat.ttf') format('truetype'); font-weight: 400 700; }
   html, body { margin: 0; background: #1b1820; }
@@ -16,8 +17,20 @@
   // A scene to show when the page is opened by hand (renderer pages get theirs before every frame).
   window.SCENE = window.SCENE || { template: 'host', setting: 'sky', mood: 'happy', prop: 'sun', caption: 'Inkframe', duration: 4, voice: '' };
   window.EXTRA_FONTS = [['700 80px Caveat', 'Аа']];
-  // boil: how the line re-draws itself (see core.js); a scene's SCENE.boil overrides it, a style pack will set it
-  const PROJECT = { duration: 600, bpm: 96, offset: 0, renderScale: .5, boil: { fps: 12, amp: 1, inkOnly: false, holdStill: false } };
+  // The style pack: read before anything is painted (a synchronous read of a local file; the painter opens the page
+  // with --allow-file-access-from-files). An unknown or unreadable pack stops the page: it never becomes ready.
+  window.STYLE = (() => {
+    const id = new URLSearchParams(location.search).get('style') || 'watercolor';
+    if (!/^[a-z0-9-]+$/.test(id)) throw new Error(`bad style id «${id}»`);
+    const x = new XMLHttpRequest(); x.open('GET', `styles/${id}/style.json`, false);
+    try { x.send(); } catch (e) { throw new Error(`style pack «${id}» can't be read: ${e.message}`); }
+    if ((x.status && x.status !== 200) || !x.responseText) throw new Error(`no style pack «${id}»`);
+    const pack = JSON.parse(x.responseText);
+    if (pack.id !== id) throw new Error(`styles/${id}/style.json says it is «${pack.id}»`);
+    return pack;
+  })();
+  // boil: how the line re-draws itself (see core.js); the style pack sets it, a scene's SCENE.boil overrides it
+  const PROJECT = { duration: 600, bpm: 96, offset: 0, renderScale: .5, style: STYLE.id, boil: { ...STYLE.boil } };
 </script>
 <script src="../node_modules/p5/lib/p5.min.js"></script>
 <script src="../node_modules/p5.brush/dist/p5.brush.js"></script>
@@ -31,5 +44,6 @@
 <script src="props.js"></script>
 <script src="layout.js"></script>
 <script src="templates.js"></script>
+<script>if (STYLE.kit) document.write(`<script src="styles/${STYLE.id}/${STYLE.kit}"><\/script>`);</script>
 </body>
 </html>

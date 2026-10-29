@@ -1,7 +1,8 @@
 // Painter: paints scene frames in headless Chrome with the painted engine (renderer/stage.html: p5.js + p5.brush).
 // One browser, at most `workers` pages painting at once (3 by default). A page is opened at one internal render
-// scale (RS: .25 for drafts, .5 for the final cut) and one frame format (scene.format: 16:9, 9:16 or 1:1, the
-// stage's ?fmt=) and reused for every frame at that scale and format.
+// scale (RS: .25 for drafts, .5 for the final cut), one frame format (scene.format: 16:9, 9:16 or 1:1, the stage's
+// ?fmt=) and one style pack (scene.style: watercolor or ink, the stage's ?style=), and reused for every frame of them.
+// A style is a page of its own because a pack sets the paper, the brushes and the boil when the page starts.
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -10,6 +11,7 @@ import { pathToFileURL } from 'node:url';
 import puppeteer, { type Browser, type Page } from 'puppeteer-core';
 import type { StageScene } from './scene-spec';
 import { FORMATS, formatOf, type Format } from '../formats';
+import { styleOf, type StyleId } from '../styles';
 
 export interface PainterOptions { chrome?: string; workers?: number; softGl?: boolean; stage?: string; log?: (s: string) => void }
 export interface FrameOptions { rs: number; width: number; quality?: number }
@@ -44,7 +46,7 @@ export function rendererVersion(dir = resolve('renderer'), modules = resolve('no
   return h.digest('hex').slice(0, 10);
 }
 
-interface Slot { page: Page; rs: number; format: Format }
+interface Slot { page: Page; rs: number; format: Format; style: StyleId }
 
 export class Painter {
   readonly workers: number;
@@ -70,25 +72,25 @@ export class Painter {
     });
   }
 
-  private async newSlot(rs: number, format: Format): Promise<Slot> {
+  private async newSlot(rs: number, format: Format, style: StyleId): Promise<Slot> {
     const page = await (await this.launch()).newPage();
     page.on('pageerror', e => this.opts.log?.(`[stage] ${(e as Error).message}`));
     page.on('console', m => { if (m.type() === 'error') this.opts.log?.(`[stage] ${m.text()}`); });
-    await page.goto(`${this.stageUrl}?render&rs=${rs}&fmt=${FORMATS[format].query}`, { waitUntil: 'load' });
+    await page.goto(`${this.stageUrl}?render&rs=${rs}&fmt=${FORMATS[format].query}&style=${style}`, { waitUntil: 'load' });
     await page.waitForFunction('window.ready === true', { timeout: 60000 });
-    return { page, rs, format };
+    return { page, rs, format, style };
   }
 
-  /** Waits for a free worker, then lends it a page at render scale `rs` that paints `format`. */
-  private async acquire(rs: number, format: Format): Promise<Slot> {
+  /** Waits for a free worker, then lends it a page at render scale `rs` that paints `format` in `style`. */
+  private async acquire(rs: number, format: Format, style: StyleId): Promise<Slot> {
     while (this.active >= this.workers) await new Promise<void>(r => this.waiting.push(r));
     this.active++;
     try {
-      const i = this.free.findIndex(s => s.rs === rs && s.format === format);
+      const i = this.free.findIndex(s => s.rs === rs && s.format === format && s.style === style);
       if (i >= 0) return this.free.splice(i, 1)[0];
       if (this.open >= this.workers && this.free.length) { const old = this.free.shift()!; this.open--; await old.page.close().catch(() => {}); }
       this.open++;
-      try { return await this.newSlot(rs, format); } catch (e) { this.open--; throw e; }
+      try { return await this.newSlot(rs, format, style); } catch (e) { this.open--; throw e; }
     } catch (e) { this.release(); throw e; }
   }
 
@@ -100,7 +102,7 @@ export class Painter {
 
   /** One frame of a scene at scene time t, as JPEG bytes. */
   async frame(scene: StageScene, t: number, o: FrameOptions): Promise<Buffer> {
-    const slot = await this.acquire(o.rs, formatOf(scene.format));
+    const slot = await this.acquire(o.rs, formatOf(scene.format), styleOf(scene.style));
     let ok = false;
     try {
       const url = await slot.page.evaluate(async (scene, t, w, q) => {

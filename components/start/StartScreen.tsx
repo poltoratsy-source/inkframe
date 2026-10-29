@@ -5,6 +5,8 @@ import { TopBar } from '../TopBar';
 import { DEFAULT_SETTINGS, EXAMPLES, OPTIONS, OPTION_TITLES, STYLES } from '@/lib/options';
 import type { StartSettings } from '@/lib/engine/types';
 import { RecentProjects } from './RecentProjects';
+import { StylePicker } from '../board/StylePicker';
+import { STYLE_PACKS } from '@/lib/styles';
 import { api } from '@/lib/api';
 import { studioHref } from '@/lib/site';
 
@@ -16,7 +18,8 @@ export function StartScreen() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const set = <K extends keyof StartSettings>(k: K, v: StartSettings[K]) => setS(p => ({ ...p, [k]: v }));
-  const minutes = Math.max(1, Math.round(s.duration / 60 * 15));
+  // a rough figure for the start screen; a frame of the pack costs speed.cost of a watercolour one (the gates show the real estimate)
+  const minutes = Math.max(1, Math.round(s.duration / 60 * 15 * STYLE_PACKS[s.style].speed.cost));
 
   const start = async () => {
     setBusy(true); setErr('');
@@ -51,23 +54,9 @@ export function StartScreen() {
           </div>
 
           <h3 className="label">Стиль</h3>
-          <div className="grid grid-cols-7 gap-3">
-            {STYLES.map(st => {
-              const sel = s.style === st.id;
-              return (
-                <button key={st.id} disabled={st.soon} onClick={() => set('style', st.id)}
-                  className={`relative overflow-hidden rounded-xl border-2 bg-ink-750 text-left ${sel ? 'border-pen shadow-[0_0_0_4px_#ff8a3d22]' : 'border-ink-550'} ${st.soon ? 'cursor-not-allowed' : ''}`}>
-                  {st.thumb
-                    ? <img src={st.thumb} alt="" className={`block h-[104px] w-full object-cover ${st.soon ? 'opacity-60' : ''}`} />
-                    : <div className="flex h-[104px] items-center justify-center bg-[linear-gradient(135deg,#3a2a5a,#ff8a3d55)] text-4xl opacity-60">🥤</div>}
-                  {sel && <span className="absolute top-[7px] right-[7px] rounded-md bg-pen px-[7px] py-0.5 text-[11px] text-pen-ink">выбран</span>}
-                  {!sel && st.soon && <span className="absolute top-[7px] right-[7px] rounded-md bg-[#7f78c8] px-[7px] py-0.5 text-[11px] text-white">скоро</span>}
-                  {st.badge && <span className="absolute top-[7px] left-[7px] rounded-md bg-black/70 px-[7px] py-0.5 text-[11px]">{st.badge}</span>}
-                  <div className="px-2.5 pt-[9px] pb-0.5 text-[13.5px] font-bold">{st.title}</div>
-                  <div className="px-2.5 pb-2.5 text-[11.5px] leading-[1.35] text-mist-300">{st.text}</div>
-                </button>
-              );
-            })}
+          <div className="max-w-[620px]">
+            <StylePicker value={s.style} onChange={id => set('style', id as StartSettings['style'])}
+              styles={STYLES.map(st => ({ id: st.id, name: st.title, line: st.text, preview: st.thumb }))} />
           </div>
 
           <div className="grid grid-cols-4 gap-3">

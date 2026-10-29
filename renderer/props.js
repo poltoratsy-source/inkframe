@@ -174,12 +174,13 @@ const PROPS = (() => {
 })();
 
 // o.sq squashes (+) or stretches (-) the whole prop about its centre (see popIn in templates.js); o.boil = boil options
-// for every part of it (boilSeed), e.g. { hold: true } for a prop at rest.
+// for every part of it (boilSeed), e.g. { hold: true } for a prop at rest; o.role = its role in the colour grammar
+// (flow / problem / good: the whole prop in that colour in Ink; nothing in a pack without a grammar).
 function drawProp(id, x, y, s, lt, c, o = {}) {
   const f = PROPS[id]; if (!f || s <= .01) return;
   const sq = o.sq || 0;
-  withBoil(o.boil, () => {
+  withRole(o.role, () => withBoil(o.boil, () => {
     if (!sq) return f(x, y, s, lt, c);
     push(); translate(x, y); scale(1 + sq * .6, 1 - sq); translate(-x, -y); f(x, y, s, lt, c); pop();
-  });
+  }));
 }

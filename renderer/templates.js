@@ -8,9 +8,13 @@
 //   card     the final card: a big title (the code word), a subtitle, Clawd cheering, stars falling
 //
 // window.SCENE = { template, setting, mood, prop, propColor, caption, labels, left, right, title, subtitle,
-//                  heroSize, hero, pace, duration, voice, sketch }
+//                  heroSize, hero, pace, duration, voice, sketch, style,
+//                  propRole, captionRole, labelRoles, titleRole, left.role, right.role }
+// The roles (flow / problem / good) colour an element in a pack with a colour grammar (Ink: orange, red, blue); in a
+// pack without one (Watercolour) they change nothing. Arrows and the card title take the grammar's default roles.
 // voice is the mouth envelope: one digit 0..9 per 1/24 s. sketch = true draws only pencil outlines (the draft pass).
-// Every point comes from LAYOUT (layout.js), so the same scene paints as 16:9, 9:16 or 1:1 (the page's ?fmt=).
+// Every point comes from LAYOUT (layout.js), so the same scene paints as 16:9, 9:16 or 1:1 (the page's ?fmt=), and every
+// colour of lettering and every spring of a pop from the style pack (LET, SPR in core.js; the page's ?style=).
 const SC = () => window.SCENE || {};
 const LY = LAYOUT, GROUND = LY.ground;
 const voiceAt = lt => +((SC().voice || '')[Math.floor(lt * 24)] || 0);
@@ -118,30 +122,35 @@ function wrapWords(txt, max, width, lines = 1) {
   const rows = [txt.slice(0, best).trim(), txt.slice(best + 1).trim()], two = Math.min(...rows.map(r => fitSize(r, max, width)));
   return two > one * 1.1 ? { size: two, rows } : { size: one, rows: [txt] };
 }
+// lettering colour: the pencil grey in a sketch, else the role's colour (grammar), else the pack's
+const letCol = (s, role, d = LET.fill) => (s.sketch ? '#8B8590' : roleCol(role) || d);
 function caption(s, lt, y = LY.caption.y) {
   const txt = (s.caption || '').trim(); if (!txt) return;
   const C = LY.caption, { size, rows } = wrapWords(txt, C.max, C.w, C.lines);
   // a second line goes below the first, so the top line stays where a one-line caption is
-  rows.forEach((row, i) => letter(row, C.x, y + i * size * .92, size, s.sketch ? '#8B8590' : '#FFF5E2', { font: `700 ${size}px Caveat`, stroke: PAL.ink, pop: lt * 2.6 - i * .25, rot: -.015, screen: true }));
+  rows.forEach((row, i) => letter(row, C.x, y + i * size * .92, size, letCol(s, s.captionRole), { font: `700 ${size}px Caveat`, stroke: LET.stroke, pop: lt * 2.6 - i * .25, rot: -.015, screen: true }));
 }
-function label(txt, x, y, k, s, size = 84, width = 620) {
+function label(txt, x, y, k, s, size = 84, width = 620, role) {
   if (!txt || k <= 0) return;
   size = fitSize(txt, size, width);
-  letter(txt, x, y, size, s.sketch ? '#8B8590' : '#FFF5E2', { font: `700 ${size}px Caveat`, stroke: PAL.ink, pop: k * 1.4, screen: true });
+  letter(txt, x, y, size, letCol(s, role), { font: `700 ${size}px Caveat`, stroke: LET.stroke, pop: k * 1.4, screen: true });
 }
-// k = 0..1 through the arrow's draw-on: the shaft settles onto the target, then the head pops open
-function arrow(a, b, k, key) {
+// k = 0..1 through the arrow's draw-on: the shaft settles onto the target, then the head pops open. An arrow is a flow
+// in the colour grammar (its default role); a label's own role overrides it.
+function arrow(a, b, k, key, role = GRAM && GRAM.defaults && GRAM.defaults.arrow) {
   if (k <= .02) return;
-  const kk = springK(k, 'settle'), e = [lerp(a[0], b[0], kk), lerp(a[1], b[1], kk)], d = Math.atan2(b[1] - a[1], b[0] - a[0]);
-  boilSeed('arrow' + key); inkLine([a, [lerp(a[0], e[0], .5), lerp(a[1], e[1], .5) - 24], e], 2.2, PAL.ink, 'ink', .5);
-  const hl = 40 * springK(seg(k, .55, 1), 'overshoot');
-  // one stroke wing–tip–wing (a two-point brush spline paints nothing, so the old two-stroke head never showed)
-  if (hl > 2) inkLine([[e[0] - Math.cos(d - .5) * hl, e[1] - Math.sin(d - .5) * hl], e, [e[0] - Math.cos(d + .5) * hl, e[1] - Math.sin(d + .5) * hl]], 2.2, PAL.ink, 'ink', 0);
+  const kk = springK(k, SPR.arrive), e = [lerp(a[0], b[0], kk), lerp(a[1], b[1], kk)], d = Math.atan2(b[1] - a[1], b[0] - a[0]);
+  withRole(role, () => {
+    boilSeed('arrow' + key); inkLine([a, [lerp(a[0], e[0], .5), lerp(a[1], e[1], .5) - 24], e], 2.2, PAL.ink, 'ink', .5);
+    const hl = 40 * springK(seg(k, .55, 1), SPR.pop);
+    // one stroke wing–tip–wing (a two-point brush spline paints nothing, so the old two-stroke head never showed)
+    if (hl > 2) inkLine([[e[0] - Math.cos(d - .5) * hl, e[1] - Math.sin(d - .5) * hl], e, [e[0] - Math.cos(d + .5) * hl, e[1] - Math.sin(d + .5) * hl]], 2.2, PAL.ink, 'ink', 0);
+  });
 }
 
 // A pop-in on the overshoot spring with squash and stretch that follows its speed: stretched while it shoots up,
 // squashed as it springs back. Returns { k (scale, ~1.16 at the peak), sq (for drawProp), boil (hold once settled) }.
-function popIn(lt, t0, dur, preset = 'overshoot') {
+function popIn(lt, t0, dur, preset = SPR.pop) {
   const k = springTo(lt, t0, dur, preset), sq = clamp(-springVel(lt, t0, dur, preset) * dur * .022, -.14, .14);
   return { k, sq, boil: BOILP.holdStill && lt > t0 + dur ? { hold: true } : null };
 }
@@ -156,8 +165,8 @@ function host(lt, s, x, u, extra = {}) {
   // the right arm: talking, waving hello until extra.wave, pointing during extra.point = [from, to]; it springs
   // between these instead of snapping
   let aR = v > 2 ? (m.aR != null ? m.aR : .25 + .35 * Math.sin(lt * 5)) : m.aR;
-  if (extra.wave) aR = lerp(aR ?? .2, 1.2 + .45 * Math.sin(lt * 12), 1 - springTo(lt, extra.wave, .45, 'settle'));
-  if (extra.point) aR = lerp(aR ?? .2, .9 + .06 * Math.sin(lt * 6), springTo(lt, extra.point[0], .45, 'overshoot') * (1 - springTo(lt, extra.point[1], .5, 'settle')));
+  if (extra.wave) aR = lerp(aR ?? .2, 1.2 + .45 * Math.sin(lt * 12), 1 - springTo(lt, extra.wave, .45, SPR.arrive));
+  if (extra.point) aR = lerp(aR ?? .2, .9 + .06 * Math.sin(lt * 6), springTo(lt, extra.point[0], .45, SPR.pop) * (1 - springTo(lt, extra.point[1], .5, SPR.arrive)));
   // hops add to the mood's own body motion: extra.hops = [[t0, t1, h], ...]
   let dy = m.dy || 0, sq = m.sq || 0;
   for (const [h0, h1, hh, ho] of extra.hops || []) { const j = hop(lt, h0, h1, hh, ho); dy += j.dy; sq += j.sq; }
@@ -173,7 +182,7 @@ const TEMPLATES = {
     camBegin(LY.cam.host[0] + 18 * Math.sin(lt * .35), LY.cam.host[1], kf(lt, [[0, 1.07], [d, 1.0]]));
     setting(s.setting, lt);
     const pp = popIn(lt, .5, .75);
-    if (hasProp) drawProp(s.prop, P.x, P.y, P.s * pp.k, lt, s.propColor, pp);
+    if (hasProp) drawProp(s.prop, P.x, P.y, P.s * pp.k, lt, s.propColor, { ...pp, role: s.propRole });
     // Clawd hops into the shot (a crouch, the hop, a small rebound), then waves or points at the prop
     // (in 9:16 the prop floats above him, so he looks up at it)
     host(lt, s, hasProp ? Y.hero.x : Y.hero.x0, hostU(s, Y.hero.u), { lookX: hasProp ? .8 : 0, ...(hasProp && Y.hero.lookY != null && { lookY: Y.hero.lookY }),
@@ -185,15 +194,15 @@ const TEMPLATES = {
     const lt = t, d = s.duration, pp = popIn(lt, .2, .8), Y = LY.object;
     camBegin(LY.cam.object[0] + 10 * Math.sin(lt * .4), LY.cam.object[1], kf(lt, [[0, 1.0], [d, 1.05]]));
     setting(s.setting, lt);
-    drawProp(PROPS[s.prop] ? s.prop : 'question', Y.prop.x, Y.prop.y, Y.prop.s * pp.k * (1 + .025 * Math.sin(lt * 2)), lt, s.propColor, pp);
+    drawProp(PROPS[s.prop] ? s.prop : 'question', Y.prop.x, Y.prop.y, Y.prop.s * pp.k * (1 + .025 * Math.sin(lt * 2)), lt, s.propColor, { ...pp, role: s.propRole });
     // "look at this!": a little hop as he starts pointing
     host(lt, s, Y.hero.x, hostU(s, Y.hero.u), { lookX: .9, ...(Y.hero.lookY != null && { lookY: Y.hero.lookY }), point: [1, d + 1], hops: [[.95, 1.25, 1.1]] });
     camEnd();
     const labels = (s.labels || []).slice(0, 2);
     labels.forEach((txt, i) => {
-      const kk = seg(lt, d * (.3 + .25 * i), d * (.3 + .25 * i) + .5), sp = Y.labels[i];
-      arrow(sp.a, sp.tip, kk, i);
-      label(txt, sp.x, sp.y, kk, s, 84, Y.labelW);
+      const kk = seg(lt, d * (.3 + .25 * i), d * (.3 + .25 * i) + .5), sp = Y.labels[i], role = (s.labelRoles || [])[i];
+      if (role) arrow(sp.a, sp.tip, kk, i, role); else arrow(sp.a, sp.tip, kk, i);
+      label(txt, sp.x, sp.y, kk, s, 84, Y.labelW, role);
     });
     caption(s, lt);
   },
@@ -203,7 +212,7 @@ const TEMPLATES = {
     setting(s.setting, lt);
     const pL = popIn(lt, .3, .7), pR = popIn(lt, d * .4, .7);
     for (const [P, pp, at] of [[L, pL, Y.L], [R, pR, Y.R]]) {
-      drawProp(PROPS[P.prop] ? P.prop : 'question', at.x, at.y, at.s * pp.k, lt, P.color, pp);
+      drawProp(PROPS[P.prop] ? P.prop : 'question', at.x, at.y, at.s * pp.k, lt, P.color, { ...pp, role: P.role });
     }
     // he turns from one side to the other in a small hop, flipping at the top of it; in 9:16 the sides are top and
     // bottom, so he stands beside them and looks up, then down
@@ -211,8 +220,8 @@ const TEMPLATES = {
     const eyes = Y.vertical ? { lookX: -.6, lookY: lerp(-.9, .7, (look + .9) / 1.8), pose: { flip: true } } : { lookX: look, pose: { flip: look < 0 } };
     host(lt, s, Y.hero.x, hostU(s, Y.hero.u), { ...eyes, hops: [[d * .42 - .15, d * .42 + .15, 1]] });
     camEnd();
-    label(L.caption, Y.L.cx, Y.L.cy, seg(lt, .6, 1.1), s, 88, Y.capW);
-    label(R.caption, Y.R.cx, Y.R.cy, seg(lt, d * .4 + .3, d * .4 + .8), s, 88, Y.capW);
+    label(L.caption, Y.L.cx, Y.L.cy, seg(lt, .6, 1.1), s, 88, Y.capW, L.role);
+    label(R.caption, Y.R.cx, Y.R.cy, seg(lt, d * .4 + .3, d * .4 + .8), s, 88, Y.capW, R.role);
     caption(s, lt);
   },
   card(t, s) {
@@ -230,11 +239,12 @@ const TEMPLATES = {
     const hl = lt % 1.6, hops = [[.5, .9, 1.4]].map(([a, b, h]) => [a + lt - hl, b + lt - hl, h]);
     host(lt, s, Y.hero.x, hostU(s, Y.hero.u), { hops, pose: { aR: 1.3 + .3 * Math.sin(lt * 10), aL: 1.3 + .3 * Math.sin(lt * 10 + 1) } });
     const title = (s.title || s.caption || '').trim(), sub = (s.subtitle || '').trim();
-    if (title && k > .3) { const size = fitSize(title, Tt.max, Tt.w); letter(title, Tt.x, sub ? Tt.ySub : Tt.y, size, s.sketch ? '#8B8590' : PAL.clay, { font: `700 ${size}px Caveat`, stroke: PAL.ink, pop: (lt - .4) * 2.2, rot: -.03, screen: true }); }
+    const titleRole = s.titleRole || (GRAM && GRAM.defaults && GRAM.defaults.title);
+    if (title && k > .3) { const size = fitSize(title, Tt.max, Tt.w); letter(title, Tt.x, sub ? Tt.ySub : Tt.y, size, letCol(s, titleRole, LET.title), { font: `700 ${size}px Caveat`, stroke: LET.stroke, pop: (lt - .4) * 2.2, rot: -.03, screen: true }); }
     if (sub && k > .3) {
       // a long line under the title may break in two (9:16, 1:1), centred where one line would be
       const { size, rows } = wrapWords(sub, Sb.max, Sb.w, Sb.lines);
-      rows.forEach((row, i) => letter(row, Sb.x, Sb.y + (i - (rows.length - 1) / 2) * size * .95, size, s.sketch ? '#8B8590' : PAL.ink, { font: `700 ${size}px Caveat`, pop: (lt - .9) * 2.4 - i * .2, ink: false, screen: true }));
+      rows.forEach((row, i) => letter(row, Sb.x, Sb.y + (i - (rows.length - 1) / 2) * size * .95, size, letCol(s, null, LET.sub), { font: `700 ${size}px Caveat`, pop: (lt - .9) * 2.4 - i * .2, ink: false, screen: true }));
     }
   },
 };
@@ -245,8 +255,9 @@ shots([[0, t => (TEMPLATES[SC().template] || TEMPLATES.host)(t, { duration: 4, .
 // A scene meant for another format is refused: the painter keeps one page per format and must never mix them up.
 let smallC = null;
 window.renderScaled = async (t, w = 1280, q = .9) => {
-  const want = SC().format;
+  const want = SC().format, style = SC().style;
   if (want && want !== LY.id) throw new Error(`this stage paints ${LY.id}, the scene asks for ${want}`);
+  if (style && style !== STYLE.id) throw new Error(`this stage paints the ${STYLE.id} style, the scene asks for ${style}`);
   T = t; await redraw(); composite(t);
   if (w >= W) return outC.toDataURL('image/jpeg', q);
   smallC ??= document.createElement('canvas');

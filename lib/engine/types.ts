@@ -6,7 +6,9 @@ import type { Decision, Estimate, LibraryBadge, OpenGate, Review, SceneNote, Sta
 export type { Decision, Estimate, LibraryBadge, OpenGate, Review, SceneNote, StageId, StageMap, StageStatus } from '../store/types';
 import type { Replay } from './replay';
 
-export type StyleId = 'watercolor' | 'kinetic' | 'reels' | 'promo' | 'science' | 'board' | 'clip';
+/** the style packs (lib/styles.ts, renderer/styles/<id>): watercolor, ink */
+import type { StyleId } from '../styles';
+export type { StyleId } from '../styles';
 
 export interface StartSettings {
   idea: string;

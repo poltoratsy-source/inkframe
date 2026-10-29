@@ -16,6 +16,7 @@ export interface Checkpoint {
   status: StageStatus;
   version: number;                 // +1 on every revise; approvals name the version they approve
   startedAt: string; updatedAt: string;
+  gate?: boolean;                  // this version waits for a human: `completed` only with an approval of this version (M1)
   artifact?: unknown;              // script: SceneBoard[]; storyboard: {n, frame, line, start, duration}[]; final: {video, review}
   doneScenes?: number[];           // resume point for paint / voice
   approval?: { decision: 'approve' | 'revise'; version: number; note?: string; at: string };

@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { applyEvent, canBuild, emptyProject } from '../lib/engine/reducer.ts';
+import { applyEvent, canBuild, emptyProject, normalizeProject } from '../lib/engine/reducer.ts';
+import type { ProjectState } from '../lib/engine/types.ts';
 import { DEFAULT_SETTINGS } from '../lib/options.ts';
 
 const base = () => emptyProject('p1', { ...DEFAULT_SETTINGS, idea: 'Почему небо голубое', duration: 15 }, 'demo');
@@ -81,4 +82,32 @@ test('scene.board changes one scene\'s words and timing; an empty video takes th
   assert.equal(s.video, '/x.mp4');
   s = applyEvent(s, { type: 'video', src: '' });
   assert.equal(s.video, undefined);
+});
+
+test('stage and gate events: the gate opens, blocks the cut, and closes', () => {
+  let s = applyEvent(base(), board);
+  assert.deepEqual(s.stages.script, { status: 'pending', version: 1 });
+  s = applyEvent(s, { type: 'stage', stage: 'script', status: 'awaiting', version: 1 });
+  s = applyEvent(s, { type: 'gate', stage: 'script', version: 1, open: true, summary: '3 сцены' });
+  assert.deepEqual(s.gate, { stage: 'script', version: 1, summary: '3 сцены' });
+  assert.deepEqual(s.stages.script, { status: 'awaiting', version: 1 });
+  for (const n of [1, 2, 3]) s = applyEvent(s, { type: 'scene.status', n, status: 'done' });
+  s = applyEvent(s, { type: 'status', status: 'ready' });
+  assert.equal(canBuild(s), false, 'no cut while a gate is open');
+  assert.equal(applyEvent(s, { type: 'gate', stage: 'final', version: 1, open: false, summary: '' }).gate?.stage, 'script', 'closing another stage leaves it');
+  s = applyEvent(s, { type: 'gate', stage: 'script', version: 1, open: false, summary: '' });
+  assert.equal(s.gate, undefined);
+  assert.equal(canBuild(s), true);
+});
+
+test('a project saved before stages existed gets them from what it has', () => {
+  const old = applyEvent(applyEvent(base(), board), { type: 'status', status: 'ready' }) as Partial<ProjectState>;
+  delete old.stages;
+  const s = normalizeProject(old as ProjectState);
+  assert.equal(s.stages.brief.status, 'completed');
+  assert.equal(s.stages.script.status, 'completed');
+  assert.equal(s.stages.paint.status, 'pending', 'scenes are not all done');
+  assert.equal(applyEvent(base(), { type: 'snapshot', state: old as ProjectState }).stages.script.status, 'completed');
+  const fresh = base();
+  assert.equal(normalizeProject(fresh), fresh, 'a current project is left as it is');
 });

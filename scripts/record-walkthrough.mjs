@@ -1,7 +1,7 @@
 // node scripts/record-walkthrough.mjs [baseUrl] [outDir]
 // Clicks through the whole demo like a visitor would and records it: start screen → "Начать рисовать" →
-// the cartoon draws itself → quick edit of scene 2 → free-text edit of scene 3 → "Собрать MP4".
-// Writes walkthrough.mp4 plus four screenshots. Needs ffmpeg and a Chrome (see scripts/chrome.mjs).
+// the script gate → "Утвердить" → the cartoon draws itself → quick edit of scene 2 → free-text edit of scene 3 → "Собрать MP4".
+// Writes walkthrough.mp4 plus five screenshots. Needs ffmpeg and a Chrome (see scripts/chrome.mjs).
 import puppeteer from 'puppeteer-core';
 import { spawn } from 'node:child_process';
 import { mkdirSync } from 'node:fs';
@@ -73,6 +73,11 @@ await shot('01-start.png');
 await moveAndClick(await byText('button', 'Начать рисовать'), 0);
 
 await page.waitForFunction(() => location.pathname.includes('/studio/'), { timeout: 30000 });
+// the script gate: read the scenes, then approve
+await page.waitForSelector('[aria-label="Утверждение этапа"]', { timeout: 60000 });
+await sleep(1500);
+await shot('02a-script-gate.png');
+await moveAndClick(await byText('button', 'Утвердить'), 0);
 await page.mouse.move(800, 380, { steps: 10 });
 await sleep(13000);
 await shot('02-studio-drawing.png');

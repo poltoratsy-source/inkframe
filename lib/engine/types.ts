@@ -1,6 +1,9 @@
 // The contract between the studio screens and whatever draws the cartoon.
 // DemoEngine plays pre-rendered frames on a timer; RealEngine (lib/engine/real.ts) has Claude write the storyboard
 // and paints it with the painted renderer. Both emit the same EngineEvents, so the screens never need to know which one runs.
+// Inkframe 3: a run goes through stages (lib/store/types.ts); a gated stage stops in `awaiting` until approve() or revise().
+import type { OpenGate, StageId, StageMap, StageStatus } from '../store/types';
+export type { OpenGate, StageId, StageMap, StageStatus } from '../store/types';
 
 export type StyleId = 'watercolor' | 'kinetic' | 'reels' | 'promo' | 'science' | 'board' | 'clip';
 
@@ -43,7 +46,8 @@ export interface Scene extends SceneBoard {
 
 export interface CurrentFrame { n: number; kind: FrameKind; src: string; index: number; total: number }
 
-export type ProjectStatus = 'drafting' | 'drawing' | 'ready' | 'building' | 'done';
+/** awaiting = a gate is open: the run stopped and waits for a human decision */
+export type ProjectStatus = 'drafting' | 'awaiting' | 'drawing' | 'ready' | 'building' | 'done';
 
 export interface ProjectState {
   id: string;
@@ -60,6 +64,10 @@ export interface ProjectState {
   current?: CurrentFrame;
   tracks: { voice?: number[]; music?: number[] };
   video?: string;
+  /** every stage with its status and version (projects saved before Inkframe 3 get defaults on load) */
+  stages: StageMap;
+  /** the gate waiting for a decision, if any */
+  gate?: OpenGate;
 }
 
 export interface ProjectSummary { id: string; title: string; status: ProjectStatus; duration: number; style: StyleId; thumb?: string; createdAt: string }
@@ -78,7 +86,9 @@ export type EngineEvent =
   | { type: 'track'; kind: 'voice' | 'music'; peaks: number[] }
   /** an empty src takes the video away (a scene changed after the cut) */
   | { type: 'video'; src: string }
-  | { type: 'status'; status: ProjectStatus };
+  | { type: 'status'; status: ProjectStatus }
+  | { type: 'stage'; stage: StageId; status: StageStatus; version: number }
+  | { type: 'gate'; stage: StageId; version: number; open: boolean; summary: string };
 
 /** An event scheduled `at` milliseconds after its script starts. */
 export interface TimedEvent { at: number; ev: EngineEvent }
@@ -95,4 +105,9 @@ export interface StudioEngine {
   editScene(id: string, n: number, request: string, patch?: ScenePatch): void;
   /** Glue the finished scenes and sound into an MP4. */
   build(id: string): void;
+  /** Approves `version` of a stage waiting at its gate; the run goes on. Approving the same version again does nothing;
+   *  an old version is refused (GateError 409). */
+  approve(id: string, stage: StageId, version: number, note?: string): ProjectState;
+  /** Sends `version` back with a note: the stage is redone (version + 1) and the gate opens again. */
+  revise(id: string, stage: StageId, version: number, note: string): ProjectState;
 }

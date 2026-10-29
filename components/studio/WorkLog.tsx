@@ -6,6 +6,9 @@ const DOT: Record<LogStep['status'], string> = {
   ok: 'bg-ok-bg text-ok', run: 'bg-pen text-pen-ink dot-run', wait: 'bg-ink-600 text-mist-500', err: 'bg-red-900 text-red-200',
 };
 
+/** A stage waiting for the user (its gate line), not a step waiting its turn. */
+const gateWait = (l: LogStep) => l.status === 'wait' && l.id.startsWith('gate-');
+
 /** "Клод сейчас делает": every step of the engine as one line. */
 export function WorkLog({ idea, log }: { idea: string; log: LogStep[] }) {
   const end = useRef<HTMLDivElement>(null);
@@ -19,11 +22,11 @@ export function WorkLog({ idea, log }: { idea: string; log: LogStep[] }) {
         {log.length === 0 && <div className="text-mist-400">Начинаю…</div>}
         {log.map((l, i) => (
           <div key={l.id} className="fade-in flex items-start gap-[9px] leading-[1.35]">
-            <div className={`mt-px flex size-[18px] flex-none items-center justify-center rounded-full text-[11px] ${DOT[l.status]}`}>
-              {l.status === 'ok' ? '✓' : l.status === 'run' ? '●' : l.status === 'err' ? '!' : l.id === 'music' ? '♪' : (l.id.match(/\d+/)?.[0] ?? i + 1)}
+            <div className={`mt-px flex size-[18px] flex-none items-center justify-center rounded-full text-[11px] ${gateWait(l) ? 'bg-gate-bg text-gate' : DOT[l.status]}`}>
+              {l.status === 'ok' ? '✓' : l.status === 'run' ? '●' : l.status === 'err' ? '!' : gateWait(l) ? '?' : l.id === 'music' ? '♪' : (l.id.match(/\d+/)?.[0] ?? i + 1)}
             </div>
             <div className="min-w-0">
-              <span className={l.status === 'run' ? 'font-semibold text-pen-soft' : l.status === 'wait' ? 'text-mist-400' : ''}>{l.text}</span>
+              <span className={gateWait(l) ? 'font-semibold text-gate' : l.status === 'run' ? 'font-semibold text-pen-soft' : l.status === 'wait' ? 'text-mist-400' : ''}>{l.text}</span>
               {l.detail && <><br /><span className="text-mist-400">{l.detail}</span></>}
             </div>
           </div>

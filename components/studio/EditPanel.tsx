@@ -26,11 +26,16 @@ export function EditPanel({ project: p, n }: { project: ProjectState; n: number 
     catch (e) { setSent((e as Error).message); }
   };
   const busy = !!sc && (sc.status === 'sketch' || sc.status === 'painting');
+  // scenes are redrawn only after the script is approved; until then notes go to the script gate
+  const locked = p.stages.script.status !== 'completed';
   return (
     <aside className="flex min-h-0 flex-col gap-3 overflow-y-auto border-l border-ink-600 bg-ink-850 p-4">
       <h3 className="label">{sc ? `Сцена ${n} — правка` : 'Правка сцены'}</h3>
       {!sc ? <div className="text-mist-400">Сцены появятся, как только Клод допишет раскадровку.</div> : <>
         <div className="rounded-[10px] border border-ink-500 bg-ink-700 p-3 leading-[1.45]"><div className="text-[12px] text-mist-400">Что на экране · «{sc.title}»</div>{sc.visual}</div>
+        {locked ? <div className="rounded-[10px] border border-gate/60 bg-gate-bg p-3 text-[13px] leading-[1.45] text-gate">
+          Сцены можно будет править, когда сценарий утверждён. Сейчас замечания — на панели «Сценарий» посередине.
+        </div> : <>
         {words ? (
           <form onSubmit={e => { e.preventDefault(); saveWords(); }} className="flex flex-col gap-2 rounded-[10px] border border-pen/55 bg-ink-700 p-3">
             <label className="text-[12px] text-mist-400">Реплика</label>
@@ -67,6 +72,7 @@ export function EditPanel({ project: p, n }: { project: ProjectState; n: number 
         <div className="text-[12px] text-mist-400">{busy ? 'Сцена сейчас рисуется — правка встанет в очередь.' : 'Клод перерисует только эту сцену, остальное не тронет.'}</div>
         {sent && <div className="fade-in text-[12.5px] text-pen-soft">{sent}</div>}
         {sc.edits.length > 0 && <div className="text-[12px] text-mist-300">Правки: {sc.edits.map(e => `«${e}»`).join(', ')}</div>}
+        </>}
       </>}
     </aside>
   );

@@ -11,7 +11,7 @@ const SHOWCASE = [
   { title: 'Как работает лидар', meta: 'акварель · 1:07 · готово', thumb: asset('demo/styles/k3.jpg') },
   { title: 'ИИ-сотрудник', meta: 'Reels · 0:30 · готово', thumb: asset('demo/styles/st-reels.jpg') },
 ];
-const STATUS: Record<string, string> = { drafting: 'сценарий', drawing: 'рисуется', ready: 'готово к сборке', building: 'сборка', done: 'готово' };
+const STATUS: Record<string, string> = { drafting: 'сценарий', awaiting: 'ждёт вас', drawing: 'рисуется', ready: 'готово к сборке', building: 'сборка', done: 'готово' };
 const mmss = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 
 export function RecentProjects() {

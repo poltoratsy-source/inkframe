@@ -53,29 +53,64 @@ function drawScene(w: ReturnType<typeof writer>, c: DemoCatalog, n: number, cata
   w.emit({ type: 'scene.status', n, status: 'done' });
 }
 
-export function buildRunScript(p: ProjectState, c: DemoCatalog, speed = 1): TimedEvent[] {
-  const w = writer(speed), s = p.settings;
+/** Writing the script (version 1, or the next version after a note). Gated: ends with the gate open and the run
+ *  stopped in `awaiting`; the rest comes from buildProduceScript once the script is approved. */
+export function buildWriteScript(p: ProjectState, c: DemoCatalog, speed = 1, o: { version?: number; gated?: boolean; note?: string } = {}): TimedEvent[] {
+  const w = writer(speed), s = p.settings, version = o.version ?? 1, gated = o.gated ?? false;
   const board = storyboardFor(p, c), lines = board.length + (s.ending !== 'none' ? 1 : 0);
+  const step = (id: string, text: string, detail?: string) => w.emit({ type: 'log.add', step: { id, text, status: 'run', ...(detail && { detail }) } });
+  const done = (id: string, text?: string, detail?: string) => w.emit({ type: 'log.update', id, status: 'ok', ...(text && { text }), ...(detail !== undefined && { detail }) });
+  const scenesWord = board.length > 4 ? 'сцен' : 'сцены';
+
+  w.emit({ type: 'status', status: 'drafting' });
+  if (version === 1) {
+    step('read', 'Читаю идею и настройки'); w.wait(900); done('read', 'Прочитал идею и настройки');
+    w.emit({ type: 'stage', stage: 'brief', status: 'completed', version: 1 });
+  }
+  // a sent-back script stays `revised` until its next version is shown (as in the real engine)
+  if (version === 1) w.emit({ type: 'stage', stage: 'script', status: 'in_progress', version });
+  const id = version === 1 ? 'script' : `script-v${version}`;
+  if (version === 1) step(id, 'Пишу сценарий и раскадровку', `«${p.title}»`);
+  else step(id, `Переделываю сценарий по замечанию`, `«${o.note ?? ''}»`);
+  w.wait(version === 1 ? 2000 : 2400);
+  w.emit({ type: 'storyboard', title: p.title, scenes: board.map(({ catalog: _c, ...b }) => b) });
+  if (version === 1) done(id, `Написал сценарий: ${board.length} ${scenesWord}, ${lines} реплик`);
+  else done(id, `Сценарий v${version} готов`, 'Демо-режим: показываю тот же сценарий как новую версию — по-настоящему его перепишет Claude');
+  if (gated) {
+    const summary = `${board.length} ${scenesWord}, ${s.duration} с. Прочитайте реплики: после «Утвердить» Клод озвучит их и нарисует сцены. Если что-то не так — верните с замечанием, сценарий перепишется.`;
+    w.emit({ type: 'stage', stage: 'script', status: 'awaiting', version });
+    w.emit({ type: 'gate', stage: 'script', version, open: true, summary });
+    w.emit({ type: 'log.add', step: { id: `gate-script-v${version}`, text: `Сценарий v${version} ждёт вашего решения`, status: 'wait', detail: 'Утвердите или верните с замечанием' } });
+    w.emit({ type: 'status', status: 'awaiting' });
+  } else {
+    w.emit({ type: 'stage', stage: 'script', status: 'completed', version });
+  }
+  return w.out;
+}
+
+/** Everything after the approved script: hero, voice, every scene sketch → colour, music. Ends `ready`. */
+export function buildProduceScript(p: ProjectState, c: DemoCatalog, speed = 1): TimedEvent[] {
+  const w = writer(speed), s = p.settings;
+  const board = storyboardFor(p, c);
   const step = (id: string, text: string, detail?: string) => w.emit({ type: 'log.add', step: { id, text, status: 'run', ...(detail && { detail }) } });
   const done = (id: string, text?: string) => w.emit({ type: 'log.update', id, status: 'ok', ...(text && { text }) });
 
-  w.emit({ type: 'status', status: 'drafting' });
-  step('read', 'Читаю идею и настройки'); w.wait(900); done('read', 'Прочитал идею и настройки');
-  step('script', 'Пишу сценарий и раскадровку', `«${p.title}»`); w.wait(2000);
-  w.emit({ type: 'storyboard', title: p.title, scenes: board.map(({ catalog: _c, ...b }) => b) });
-  done('script', `Написал сценарий: ${board.length} сцены, ${lines} реплик`.replace('сцены', board.length > 4 ? 'сцен' : 'сцены'));
+  w.emit({ type: 'status', status: 'drawing' });
   w.wait(400);
   if (s.hero !== 'none') { step('hero', 'Рисую героя по листу персонажа'); w.wait(1300); done('hero', 'Нарисовал героя по листу персонажа'); }
   if (s.voice !== 'none') {
+    w.emit({ type: 'stage', stage: 'voice', status: 'in_progress', version: 1 });
     step('voice', `Озвучиваю реплики · голос «${VOICE_NAMES[s.voice]}»`); w.wait(1500);
     w.emit({ type: 'track', kind: 'voice', peaks: c.voicePeaks });
     done('voice', `Озвучил реплики · голос «${VOICE_NAMES[s.voice]}»`);
   }
+  w.emit({ type: 'stage', stage: 'voice', status: 'completed', version: 1 });
 
   // what is still ahead, in the order it will happen
   for (const b of board) w.emit({ type: 'log.add', step: { id: `scene-${b.n}`, text: `Сцена ${b.n} — в очереди`, status: 'wait' } });
   if (s.music !== 'none') w.emit({ type: 'log.add', step: { id: 'music', text: 'Музыка и сведение звука', status: 'wait' } });
 
+  w.emit({ type: 'stage', stage: 'paint', status: 'in_progress', version: 1 });
   const perScene = 16, totalFrames = board.length * perScene, msPerScene = 8 * SKETCH_MS + 8 * COLOR_MS;
   let drawn = 0;
   for (const b of board) {
@@ -92,6 +127,7 @@ export function buildRunScript(p: ProjectState, c: DemoCatalog, speed = 1): Time
     });
     w.emit({ type: 'log.update', id, status: 'ok', text: `Сцена ${b.n} готова начисто`, detail: '' });
   }
+  w.emit({ type: 'stage', stage: 'paint', status: 'completed', version: 1 });
   if (s.music !== 'none') {
     w.emit({ type: 'log.update', id: 'music', status: 'run', text: `Подбираю музыку · ${MUSIC_NAMES[s.music]}, свожу с голосом` });
     w.wait(1200);
@@ -102,6 +138,14 @@ export function buildRunScript(p: ProjectState, c: DemoCatalog, speed = 1): Time
   w.emit({ type: 'log.add', step: { id: 'ready', text: 'Все сцены готовы — можно собирать MP4', status: 'ok' } });
   w.emit({ type: 'status', status: 'ready' });
   return w.out;
+}
+
+/** The whole run in one script. With `gated` it stops at the script gate (the produce part is left out). */
+export function buildRunScript(p: ProjectState, c: DemoCatalog, speed = 1, gated = false): TimedEvent[] {
+  const head = buildWriteScript(p, c, speed, { gated });
+  if (gated) return head;
+  const t = head.at(-1)?.at ?? 0;
+  return [...head, ...buildProduceScript(p, c, speed).map(x => ({ ...x, at: x.at + t }))];
 }
 
 /** The demo's stand-in for "Claude redraws this scene": a look per quick edit, a stable one for free text. */
@@ -131,10 +175,12 @@ export function buildEditScript(p: ProjectState, n: number, request: string, c: 
   const board = storyboardFor(p, c).find(b => b.n === n)!;
   const w = writer(speed), id = `edit-${n}-${sc.version}`;
   w.emit({ type: 'log.add', step: { id, text: `Правлю сцену ${n}: «${request}»`, status: 'run', detail: 'Остальные сцены не трогаю' } });
+  w.emit({ type: 'stage', stage: 'paint', status: 'in_progress', version: 1 });
   w.wait(1200);
   w.emit({ type: 'log.update', id, status: 'run', text: `Перерисовываю сцену ${n}` });
   drawScene(w, c, n, board.catalog, sc.duration, { sketch: 4, color: 6, sketchMs: 300, colorMs: 380, look: lookFor(request) });
   w.emit({ type: 'scene.edited', n, request });
+  w.emit({ type: 'stage', stage: 'paint', status: 'completed', version: 1 });
   w.emit({ type: 'log.update', id, status: 'ok', text: `Сцена ${n} перерисована: «${request}»`, detail: '' });
   return w.out;
 }
@@ -142,10 +188,12 @@ export function buildEditScript(p: ProjectState, n: number, request: string, c: 
 export function buildAssembleScript(_p: ProjectState, c: DemoCatalog, speed = 1): TimedEvent[] {
   const w = writer(speed);
   w.emit({ type: 'status', status: 'building' });
+  w.emit({ type: 'stage', stage: 'compose', status: 'in_progress', version: 1 });
   w.emit({ type: 'log.add', step: { id: 'build', text: 'Склеиваю сцены, голос и музыку в MP4', status: 'run', detail: '0 %' } });
   for (const pct of [18, 41, 67, 88, 100]) { w.wait(600); w.emit({ type: 'log.update', id: 'build', status: 'run', detail: `${pct} %` }); }
   w.emit({ type: 'video', src: c.video });
   w.emit({ type: 'log.update', id: 'build', status: 'ok', text: 'MP4 готов — можно скачать', detail: c.videoLabel });
+  w.emit({ type: 'stage', stage: 'compose', status: 'completed', version: 1 });
   w.emit({ type: 'status', status: 'done' });
   return w.out;
 }

@@ -8,17 +8,23 @@
 //   5. build() paints every scene at 1280×720 / 12 fps (scenes that didn't change come from the cache), then ffmpeg
 //      cuts them together with cross-fades, the voice over a ducked music bed and burned-in subtitles.
 // It emits the same events as DemoEngine, so the screens stay as they are. Projects live in INKFRAME_PROJECTS_DIR.
+// Inkframe 3: the run goes through stages kept in projects/<id>/stages (lib/store/stages.ts). After the script is
+// written the run stops at the script gate (status `awaiting`): approve() goes on to voice and paint, revise() has
+// Claude (or simple rules) rewrite the script as the next version and opens the gate again. INKFRAME_GATES=off skips it.
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { applyEvent, canBuild, emptyProject } from './reducer';
-import type { EngineEvent, LogStep, ProjectState, ProjectSummary, ScenePatch, StartSettings, StepStatus, StudioEngine } from './types';
+import { applyEvent, canBuild, emptyProject, normalizeProject } from './reducer';
+import type { EngineEvent, LogStep, ProjectState, ProjectSummary, ScenePatch, StageId, StageStatus, StartSettings, StepStatus, StudioEngine } from './types';
+import { StageStore, readGatePolicy } from '../store/stages';
+import { GateError } from '../store/gate';
+import { STAGE_NAMES, type Checkpoint, type GatePolicy, type LoggedEvent } from '../store/types';
 import { MUSIC_NAMES, VOICE_NAMES } from '../options';
 import { askClaude } from '../real/claude';
 import { Painter, type FrameOptions } from '../real/painter';
 import { SR, decode, envelope, mixDown, music, peaks, place, tts, voiceId, wordsOf, writeWav, type TtsJob, type Word } from '../real/audio';
 import { FINAL_FPS, OVERLAP, cuesFor, cutArgs, ffmpeg, writeAss } from '../real/assemble';
-import { cleanScene, cleanStoryboard, editByRules, editPrompt, extractJson, storyboardPrompt, templateStoryboard, type BoardScene, type Storyboard } from '../real/storyboard';
+import { cleanScene, cleanStoryboard, editByRules, editPrompt, extractJson, reviseByRules, revisePrompt, storyboardPrompt, templateStoryboard, type BoardScene, type Storyboard } from '../real/storyboard';
 import { cleanSpec, describe, words, type StageScene } from '../real/scene-spec';
 
 /** What the engine needs from the outside world; tests swap these for fakes. */
@@ -37,6 +43,8 @@ export interface RealOptions {
   draftFps?: number;
   sketchFrames?: number;
   finalWidth?: number;
+  /** which stages stop for a human (default: inkframe.config.json + INKFRAME_GATES, see readGatePolicy) */
+  gates?: GatePolicy;
 }
 
 const LEAD = .35, TAIL = .55;   // silence before and after each line inside its scene
@@ -47,6 +55,7 @@ interface RScene { board: BoardScene; planned: number; version: number; voiceOth
 interface Entry {
   state: ProjectState; listeners: Set<(ev: EngineEvent) => void>; queue: (() => Promise<void>)[]; running: boolean;
   scenes: RScene[]; dir: string; cut: number; cutQueued?: boolean; storyBy?: Storyboard['by'];
+  store: StageStore;
 }
 
 export class RealEngine implements StudioEngine {
@@ -58,6 +67,7 @@ export class RealEngine implements StudioEngine {
   private draftFps: number;
   private sketchFrames: number;
   private finalWidth: number;
+  private gates: GatePolicy;
   /** after Claude fails to answer, skip it for a while instead of making every step wait for the timeout */
   private claudeDownUntil = 0;
 
@@ -67,6 +77,7 @@ export class RealEngine implements StudioEngine {
     this.draftFps = o.draftFps ?? 6;
     this.sketchFrames = o.sketchFrames ?? 5;
     this.finalWidth = o.finalWidth ?? 1280;
+    this.gates = o.gates ?? readGatePolicy();
     this.tools = {
       ask: p => askClaude(p), voice: tts, decode, ffmpeg,
       painter: o.tools?.painter ?? new Painter({ workers: Number(process.env.INKFRAME_RENDER_WORKERS) || 3, log: s => console.warn(s) }),
@@ -81,7 +92,7 @@ export class RealEngine implements StudioEngine {
     if (!settings.idea?.trim()) throw new Error('The idea is empty');
     const id = randomUUID().slice(0, 8), dir = join(this.root, id);
     mkdirSync(dir, { recursive: true });
-    const e: Entry = { state: emptyProject(id, settings, 'real'), listeners: new Set(), queue: [], running: false, scenes: [], dir, cut: 0 };
+    const e: Entry = { state: emptyProject(id, settings, 'real'), listeners: new Set(), queue: [], running: false, scenes: [], dir, cut: 0, store: new StageStore(dir) };
     this.projects.set(id, e);
     this.enqueue(e, () => this.run(e));
     return e.state;
@@ -105,6 +116,7 @@ export class RealEngine implements StudioEngine {
 
   editScene(id: string, n: number, request: string, patch?: ScenePatch) {
     const e = this.entry(id);
+    if (e.state.stages.script.status !== 'completed') throw new GateError('Сценарий ещё не утверждён: правьте его замечанием на панели утверждения', 409);
     const req = request.trim().slice(0, 300), hasPatch = !!(patch && (patch.line?.trim() || patch.caption !== undefined));
     if (!req && !hasPatch) throw new Error('The edit request is empty');
     if (e.state.scenes.length ? !e.state.scenes.some(sc => sc.n === n) : n < 1 || n > 12) throw new Error(`No scene ${n} in this project`);
@@ -119,34 +131,114 @@ export class RealEngine implements StudioEngine {
     this.enqueue(e, () => this.cut(e).finally(() => { e.cutQueued = false; }));
   }
 
+  approve(id: string, stage: StageId, version: number, note?: string): ProjectState {
+    const e = this.entry(id);
+    const { cp, changed } = e.store.approve(stage, version, note);
+    if (!changed) return e.state;
+    e.store.log({ kind: 'gate', stage, payload: { decision: 'approve', version, ...(cp.approval?.note && { note: cp.approval.note }) } });
+    this.emit(e, { type: 'stage', stage, status: 'completed', version });
+    this.emit(e, { type: 'gate', stage, version, open: false, summary: '' });
+    this.update(e, `gate-${stage}-v${version}`, 'ok', `${STAGE_NAMES[stage]} v${version} утверждён`, cp.approval?.note ? `«${cp.approval.note}»` : '');
+    this.save(e);
+    this.enqueue(e, () => this.produce(e));
+    return e.state;
+  }
+
+  revise(id: string, stage: StageId, version: number, note: string): ProjectState {
+    const e = this.entry(id);
+    const cp = e.store.revise(stage, version, note), text = cp.approval!.note!;
+    e.store.log({ kind: 'gate', stage, payload: { decision: 'revise', version, note: text } });
+    this.emit(e, { type: 'stage', stage, status: 'revised', version });
+    this.emit(e, { type: 'gate', stage, version, open: false, summary: '' });
+    this.update(e, `gate-${stage}-v${version}`, 'ok', `${STAGE_NAMES[stage]} v${version} вернули с замечанием`, `«${text}»`);
+    this.emit(e, { type: 'status', status: 'drafting' });
+    this.save(e);
+    this.enqueue(e, () => this.rewrite(e, text));
+    return e.state;
+  }
+
   // ---------- the run ----------
   private async run(e: Entry) {
     const s = e.state.settings;
     this.emit(e, { type: 'status', status: 'drafting' });
     this.step(e, 'read', 'Прочитал идею и настройки', 'ok');
+    this.setStage(e, 'brief', 'completed');
+    this.setStage(e, 'script', 'in_progress');
     this.step(e, 'script', 'Пишу сценарий и раскадровку', 'run', `«${e.state.title}»`);
     const board = await this.storyboard(s);
+    this.useBoard(e, board);
+    this.update(e, 'script', 'ok', `Написал сценарий: ${e.scenes.length} ${plural(e.scenes.length, 'сцена', 'сцены', 'сцен')}`,
+      board.by === 'claude' ? 'Claude' : 'Claude недоступен — раскадровка по шаблону');
+    await this.scriptWritten(e);
+  }
+
+  private useBoard(e: Entry, board: Storyboard) {
     e.storyBy = board.by;
     e.scenes = board.scenes.map(b => ({ board: b, planned: b.duration, version: 1, env: '' }));
     this.layout(e);
-    this.emit(e, { type: 'storyboard', title: board.title, scenes: e.scenes.map((r, i) => this.boardOf(e, i)) });
-    this.update(e, 'script', 'ok', `Написал сценарий: ${e.scenes.length} ${plural(e.scenes.length, 'сцена', 'сцены', 'сцен')}`,
-      board.by === 'claude' ? 'Claude' : 'Claude недоступен — раскадровка по шаблону');
+    this.emit(e, { type: 'storyboard', title: board.title, scenes: e.scenes.map((_, i) => this.boardOf(e, i)) });
+  }
 
-    if (s.voice !== 'none') await this.voiceAll(e);
+  /** The script is on the screen: stop at its gate, or go straight on when the script gate is off. */
+  private async scriptWritten(e: Entry) {
+    const gated = this.gates.script;
+    const cp = e.store.open('script', { title: e.state.title, by: e.storyBy, scenes: e.scenes.map(r => r.board) }, gated);
+    if (!gated) { this.emit(e, { type: 'stage', stage: 'script', status: 'completed', version: cp.version }); return this.produce(e); }
+    const n = e.scenes.length;
+    const summary = `${n} ${plural(n, 'сцена', 'сцены', 'сцен')}, ${fmtSec(this.total(e))}. ${e.storyBy === 'claude' ? 'Сценарий написал Claude.' : 'Claude недоступен — сценарий собран по шаблону.'} `
+      + 'Прочитайте реплики: после «Утвердить» Клод озвучит их и нарисует сцены. Если что-то не так — верните с замечанием, сценарий перепишется.';
+    this.emit(e, { type: 'stage', stage: 'script', status: 'awaiting', version: cp.version });
+    this.emit(e, { type: 'gate', stage: 'script', version: cp.version, open: true, summary });
+    this.step(e, `gate-script-v${cp.version}`, `Сценарий v${cp.version} ждёт вашего решения`, 'wait', 'Рисовать не начинаю, пока не утвердите или не вернёте с замечанием');
+    this.emit(e, { type: 'status', status: 'awaiting' });
+  }
+
+  /** The script came back with a note: Claude rewrites it; without Claude, simple rules, and the log says so. */
+  private async rewrite(e: Entry, note: string) {
+    const s = e.state.settings, v = (e.store.get('script')?.version ?? 1) + 1, id = `script-v${v}`;
+    this.step(e, id, 'Переписываю сценарий по замечанию', 'run', `«${note}»`);
+    const current: Storyboard = { title: e.state.title, by: e.storyBy ?? 'template', scenes: e.scenes.map(r => ({ ...r.board, duration: r.planned })) };
+    let next: Storyboard | undefined, how = 'Claude учёл замечание';
+    const reply = await this.claude(revisePrompt(s, current, note));
+    if (reply) {
+      try { next = cleanStoryboard(extractJson(reply), s); }
+      catch (err) { console.warn(`[inkframe] Claude's rewrite was unusable: ${(err as Error).message}`); }
+    }
+    if (!next) {
+      const r = reviseByRules(current, note);
+      next = { ...r.board, by: 'template' };
+      how = r.understood ? 'Claude недоступен — замечание учтено по простым правилам' : 'Claude недоступен, а без него замечание не понял — сценарий прежний';
+    }
+    this.useBoard(e, next);
+    this.update(e, id, 'ok', `Переписал сценарий: версия ${v}`, how);
+    await this.scriptWritten(e);
+  }
+
+  /** Everything after the approved script: voice, the sketch and colour drafts of every scene, music. */
+  private async produce(e: Entry) {
+    const s = e.state.settings;
+    this.emit(e, { type: 'status', status: 'drawing' });
+    if (s.voice !== 'none') {
+      this.setStage(e, 'voice', 'in_progress');
+      this.setStage(e, 'voice', (await this.voiceAll(e)) ? 'completed' : 'failed');
+    } else this.setStage(e, 'voice', 'completed');
     for (const [i] of e.scenes.entries()) this.step(e, `scene-${i + 1}`, `Сцена ${i + 1} — в очереди`, 'wait');
     if (s.music !== 'none') this.step(e, 'music', 'Музыка и сведение звука', 'wait');
 
     const units = e.scenes.reduce((a, r) => a + this.draftTimes(r.board.duration).length + this.sketchFrames, 0);
-    const t0 = Date.now(); let done = 0;
+    const t0 = Date.now(), doneScenes: number[] = []; let done = 0;
+    this.setStage(e, 'paint', 'in_progress', { doneScenes });
     for (const [i] of e.scenes.entries()) {
       await this.draw(e, i, () => {
         done++;
         const left = (Date.now() - t0) / done * (units - done) / 1000;
         this.emit(e, { type: 'progress', value: +(done / units * .96).toFixed(3), etaSec: Math.round(left + 2) });
       });
+      doneScenes.push(i + 1);
+      e.store.set('paint', 'in_progress', { doneScenes: [...doneScenes] });
       this.update(e, `scene-${i + 1}`, 'ok', `Сцена ${i + 1} готова начерно`, '');
     }
+    this.setStage(e, 'paint', 'completed');
     if (s.music !== 'none') {
       this.update(e, 'music', 'run', `Подбираю музыку · ${MUSIC_NAMES[s.music]}, свожу с голосом`);
       this.emit(e, { type: 'track', kind: 'music', peaks: peaks(music(this.total(e), s.music === 'calm' ? 'calm' : 'upbeat')) });
@@ -178,7 +270,8 @@ export class RealEngine implements StudioEngine {
   }
 
   // ---------- voice ----------
-  private async voiceAll(e: Entry, only?: number[]) {
+  /** true when every line got its voice */
+  private async voiceAll(e: Entry, only?: number[]): Promise<boolean> {
     const s = e.state.settings, idx = only ?? e.scenes.map((_, i) => i);
     const id = only ? `voice-${Date.now()}` : 'voice';
     this.step(e, id, `Озвучиваю ${only ? 'реплику' : 'реплики'} · голос «${VOICE_NAMES[s.voice]}»`, 'run');
@@ -198,8 +291,10 @@ export class RealEngine implements StudioEngine {
       this.layout(e);
       await this.refreshVoice(e);
       this.update(e, id, 'ok', `Озвучил${only ? ' заново' : ''} · голос «${VOICE_NAMES[s.voice]}»`, `Ролик: ${fmtSec(this.total(e))}`);
+      return true;
     } catch (err) {
       this.update(e, id, 'err', 'Озвучка не удалась — продолжаю без голоса', (err as Error).message.slice(0, 160));
+      return false;
     }
   }
 
@@ -297,10 +392,12 @@ export class RealEngine implements StudioEngine {
     r.voiceOther = voiceOther;
     this.emit(e, { type: 'scene.board', n, patch: this.boardPatch(e, i) });
     if (revoice && s.voice !== 'none') await this.voiceAll(e, [i]);   // the scene keeps its storyboard length or stretches to the new voice
-    if (e.state.video) { this.emit(e, { type: 'video', src: '' }); this.emit(e, { type: 'status', status: 'ready' }); }
+    if (e.state.video) { this.emit(e, { type: 'video', src: '' }); this.emit(e, { type: 'status', status: 'ready' }); this.setStage(e, 'compose', 'pending'); }
     this.update(e, id, 'run', `Перерисовываю сцену ${n}`);
     r.version++;
+    this.setStage(e, 'paint', 'in_progress');
     await this.draw(e, i, () => {});
+    this.setStage(e, 'paint', 'completed');
     this.emit(e, { type: 'scene.edited', n, request: what });
     this.update(e, id, 'ok', `Сцена ${n} перерисована: «${what}»`, how === 'Claude' ? 'Правку понял Claude' : how === 'по правилам' ? 'Claude недоступен — правка по правилам' : '');
   }
@@ -315,6 +412,7 @@ export class RealEngine implements StudioEngine {
   private async cut(e: Entry) {
     const s = e.state.settings, id = `build-${++e.cut}`, starts = this.starts(e), total = this.total(e);
     this.emit(e, { type: 'status', status: 'building' });
+    this.setStage(e, 'compose', 'in_progress');
     this.step(e, id, 'Рисую сцены начисто и склеиваю MP4', 'run', '0 %');
     try {
       mkdirSync(join(e.dir, 'clips'), { recursive: true });
@@ -355,10 +453,12 @@ export class RealEngine implements StudioEngine {
       rmSync(join(e.dir, 'tmp'), { recursive: true, force: true });
       this.emit(e, { type: 'video', src: `/api/projects/${e.state.id}/files/${out}` });
       this.update(e, id, 'ok', 'MP4 готов — можно скачать', `${fmtSec(total)} · ${w}×${Math.round(w * 9 / 16)} · ${[clips.length && 'голос', bed && 'музыка', cues.length && 'субтитры'].filter(Boolean).join(', ') || 'без звука'}${todo.length < jobs.length ? ` · перерисовано сцен: ${todo.length} из ${jobs.length}` : ''}`);
+      this.setStage(e, 'compose', 'completed');
       this.emit(e, { type: 'status', status: 'done' });
     } catch (err) {
       rmSync(join(e.dir, 'tmp'), { recursive: true, force: true });
       this.update(e, id, 'err', 'MP4 не собрался', (err as Error).message.slice(0, 200));
+      this.setStage(e, 'compose', 'failed');
       this.emit(e, { type: 'status', status: 'ready' });
     }
   }
@@ -399,7 +499,15 @@ export class RealEngine implements StudioEngine {
 
   private emit(e: Entry, ev: EngineEvent) {
     e.state = applyEvent(e.state, ev);
+    const line = journalLine(ev);
+    if (line) { try { e.store.log(line); } catch (err) { console.warn('[inkframe] events.jsonl:', (err as Error).message); } }
     for (const l of e.listeners) { try { l(ev); } catch { /* a closed stream */ } }
+  }
+
+  /** Writes a stage's status through the store (which refuses `completed` on an unapproved gate), then tells the studio. */
+  private setStage(e: Entry, stage: StageId, status: StageStatus, extra?: Partial<Pick<Checkpoint, 'doneScenes'>>) {
+    const cp = e.store.set(stage, status, extra);
+    this.emit(e, { type: 'stage', stage, status, version: cp.version });
   }
 
   /** The project folder for the file route. */
@@ -421,7 +529,9 @@ export class RealEngine implements StudioEngine {
       if (!existsSync(f)) continue;
       try {
         const j = JSON.parse(readFileSync(f, 'utf8'));
-        const e: Entry = { ...j, listeners: new Set(), queue: [], running: false, cutQueued: false, dir: join(this.root, id) };
+        const dir = join(this.root, id);
+        const e: Entry = { ...j, listeners: new Set(), queue: [], running: false, cutQueued: false, dir, store: new StageStore(dir) };
+        e.state = normalizeProject(e.state);   // projects made before Inkframe 3 have no stages
         if (['drafting', 'drawing', 'building'].includes(e.state.status)) {
           e.state = applyEvent(e.state, { type: 'log.add', step: { id: 'restart', text: 'Работа прервалась: сервер перезапускали', status: 'err' } });
           e.state = applyEvent(e.state, { type: 'status', status: canBuild({ ...e.state, status: 'ready' }) ? 'ready' : e.state.status === 'building' ? 'ready' : e.state.status });
@@ -429,6 +539,20 @@ export class RealEngine implements StudioEngine {
         this.projects.set(id, e);
       } catch { /* not a project */ }
     }
+  }
+}
+
+/** What goes to events.jsonl: stages, gates, one line per scene step, cuts and errors — never single frames. */
+function journalLine(ev: EngineEvent): Omit<LoggedEvent, 'at'> | undefined {
+  switch (ev.type) {
+    case 'stage': return { kind: 'stage', stage: ev.stage, payload: { status: ev.status, version: ev.version } };
+    case 'gate': return { kind: 'gate', stage: ev.stage, payload: { open: ev.open, version: ev.version, ...(ev.open && { summary: ev.summary }) } };
+    case 'scene.status': return { kind: 'scene', stage: 'paint', scene: ev.n, payload: { status: ev.status } };
+    case 'scene.edited': return { kind: 'scene', stage: 'paint', scene: ev.n, payload: { edited: ev.request } };
+    case 'video': return { kind: 'cut', stage: 'compose', payload: { src: ev.src } };
+    case 'log.add': return ev.step.status === 'err' ? { kind: 'error', payload: { text: ev.step.text, detail: ev.step.detail ?? '' } } : undefined;
+    case 'log.update': return ev.status === 'err' ? { kind: 'error', payload: { id: ev.id, text: ev.text ?? '', detail: ev.detail ?? '' } } : undefined;
+    default: return undefined;
   }
 }
 

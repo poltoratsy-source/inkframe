@@ -1,13 +1,14 @@
 // RealEngine end to end with fake tools: no Claude, Chrome, edge-tts or ffmpeg needed.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readdirSync, writeFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { RealEngine, type RealTools } from '../lib/engine/real.ts';
 import { SR } from '../lib/real/audio.ts';
 import { DEFAULT_SETTINGS } from '../lib/options.ts';
 import type { EngineEvent } from '../lib/engine/types.ts';
+import type { Checkpoint, LoggedEvent } from '../lib/store/types.ts';
 import type { StageScene } from '../lib/real/scene-spec.ts';
 
 const settings = { ...DEFAULT_SETTINGS, idea: 'Почему небо голубое', duration: 15 };
@@ -20,12 +21,16 @@ const BOARD = {
   ],
 };
 
+/** What Claude answers when the script comes back with a note: the same storyboard with a new first line. */
+const REWRITTEN = { ...BOARD, scenes: [{ ...BOARD.scenes[0], line: 'Привет! Сегодня коротко: почему небо голубое?' }, ...BOARD.scenes.slice(1)] };
+
 function fakes(o: { claude?: 'ok' | 'down' } = {}) {
   const painted: { scene: StageScene; times: number[] }[] = [], cuts: string[][] = [], asked: string[] = [];
   const tools: Partial<RealTools> = {
     ask: async p => {
       asked.push(p);
       if (o.claude === 'down') throw new Error('Claude did not answer in 1 s');
+      if (p.includes('NOTE FROM THE AUTHOR')) return JSON.stringify(REWRITTEN);
       if (p.includes('CURRENT SCENE')) return JSON.stringify({ ...BOARD.scenes[1], line: 'Синий рассеивается, поэтому небо голубое.', spec: { ...BOARD.scenes[1].spec, setting: 'night' } });
       return JSON.stringify(BOARD);
     },
@@ -41,7 +46,16 @@ const until = (e: RealEngine, id: string, pred: (ev: EngineEvent) => boolean) =>
   let off = () => {};
   off = e.subscribe(id, ev => { if (pred(ev)) { queueMicrotask(() => off()); resolve(); } });
 });
-const ready = (e: RealEngine, id: string) => until(e, id, ev => ev.type === 'status' && ev.status === 'ready');
+/** Approves every gate as it opens (the user pressing «Утвердить»), until the run is ready. */
+const ready = (e: RealEngine, id: string) => {
+  const off = e.subscribe(id, ev => { if (ev.type === 'gate' && ev.open) queueMicrotask(() => e.approve(id, ev.stage, ev.version)); });
+  return until(e, id, ev => ev.type === 'status' && ev.status === 'ready').finally(off);
+};
+const gateOpen = (e: RealEngine, id: string, version = 1) => until(e, id, ev => ev.type === 'gate' && ev.open && ev.version === version);
+const tick = (ms = 30) => new Promise(r => setTimeout(r, ms));
+const dirOf = (e: RealEngine, id: string) => e.fileOf(id, 'stages/script.json')!.replace(/\/stages\/script\.json$/, '');
+const json = <T>(f: string): T => JSON.parse(readFileSync(f, 'utf8'));
+const journal = (dir: string): LoggedEvent[] => readFileSync(join(dir, 'events.jsonl'), 'utf8').trim().split('\n').map(l => JSON.parse(l));
 const engine = (f: ReturnType<typeof fakes>, more = {}) => new RealEngine({ dir: mkdtempSync(join(tmpdir(), 'inkframe-')), tools: f.tools, draftFps: 2, sketchFrames: 2, ...more });
 
 test('a run: Claude storyboard, voice fits the scenes, sketch then colour drafts for every scene', async () => {
@@ -130,4 +144,118 @@ test('projects survive a restart', async () => {
   const again = new RealEngine({ dir, tools: f.tools });
   assert.equal(again.get(p.id)?.scenes.length, 3);
   assert.equal(again.list()[0].id, p.id);
+});
+
+test('the run stops at the script gate: nothing is voiced or painted until it is approved', async () => {
+  const f = fakes(), e = engine(f);
+  const p = e.create(settings);
+  await gateOpen(e, p.id);
+  await tick();
+  let s = e.get(p.id)!;
+  assert.equal(s.status, 'awaiting');
+  assert.deepEqual(s.gate && { stage: s.gate.stage, version: s.gate.version }, { stage: 'script', version: 1 });
+  assert.match(s.gate!.summary, /3 сцены/);
+  assert.deepEqual(s.stages.script, { status: 'awaiting', version: 1 });
+  assert.equal(s.stages.brief.status, 'completed');
+  assert.equal(s.scenes.length, 3, 'the scenes are shown for reading');
+  assert.equal(f.painted.length, 0, 'no frame painted before approval');
+  assert.ok(s.log.some(l => l.id === 'gate-script-v1' && l.status === 'wait'));
+  assert.throws(() => e.build(p.id), /not ready/);
+  assert.throws(() => e.editScene(p.id, 1, 'ночь'), /не утверждён/);
+  const dir = dirOf(e, p.id);
+  assert.equal(json<Checkpoint>(join(dir, 'stages/script.json')).status, 'awaiting');
+  assert.ok(journal(dir).some(l => l.kind === 'gate' && l.payload.open === true && l.payload.version === 1));
+
+  assert.throws(() => e.approve(p.id, 'script', 2), (err: Error & { status?: number }) => err.status === 409);
+  assert.throws(() => e.approve(p.id, 'storyboard', 1), (err: Error & { status?: number }) => err.status === 409);
+  const done = until(e, p.id, ev => ev.type === 'status' && ev.status === 'ready');
+  s = e.approve(p.id, 'script', 1, 'годится');
+  assert.equal(s.gate, undefined);
+  assert.deepEqual(s.stages.script, { status: 'completed', version: 1 });
+  const again = e.approve(p.id, 'script', 1);
+  assert.equal(again.stages.script.status, 'completed', 'a second approve of the same version changes nothing');
+  await done;
+  s = e.get(p.id)!;
+  assert.ok(f.painted.length > 0 && s.scenes.every(sc => sc.status === 'done'));
+  assert.equal(s.stages.paint.status, 'completed');
+  assert.equal(s.stages.voice.status, 'completed');
+  const cp = json<Checkpoint>(join(dir, 'stages/script.json'));
+  assert.deepEqual([cp.status, cp.approval?.decision, cp.approval?.version, cp.approval?.note], ['completed', 'approve', 1, 'годится']);
+  assert.deepEqual(json<Checkpoint>(join(dir, 'stages/paint.json')).doneScenes, [1, 2, 3]);
+  const lines = journal(dir);
+  assert.equal(lines.filter(l => l.kind === 'scene' && l.scene === 2).length, 3, 'one line per scene step: sketch, painting, done');
+  assert.ok(!lines.some(l => (l.kind as string) === 'frame'), 'frames stay out of the journal');
+  assert.ok(lines.some(l => l.kind === 'gate' && l.payload.decision === 'approve'));
+});
+
+test('revise: Claude rewrites the script as v2, v1 stays in history, the gate opens again', async () => {
+  const f = fakes(), e = engine(f);
+  const p = e.create(settings);
+  await gateOpen(e, p.id);
+  await tick();
+  assert.throws(() => e.revise(p.id, 'script', 1, '   '), (err: Error & { status?: number }) => err.status === 400);
+  const v2 = gateOpen(e, p.id, 2);
+  const s1 = e.revise(p.id, 'script', 1, 'короче начало');
+  assert.equal(s1.stages.script.status, 'revised');
+  assert.equal(s1.gate, undefined);
+  assert.throws(() => e.approve(p.id, 'script', 1), /уже возвращена/);
+  await v2;
+  await tick();
+  const s = e.get(p.id)!;
+  assert.deepEqual(s.stages.script, { status: 'awaiting', version: 2 });
+  assert.equal(s.scenes[0].line, REWRITTEN.scenes[0].line);
+  assert.ok(f.asked.some(q => q.includes('NOTE FROM THE AUTHOR: короче начало')));
+  assert.ok(s.log.some(l => l.id === 'script-v2' && l.status === 'ok' && /Claude учёл/.test(l.detail ?? '')));
+  assert.equal(f.painted.length, 0);
+  const dir = dirOf(e, p.id), old = json<Checkpoint>(join(dir, 'stages/history/script.v1.json'));
+  assert.deepEqual([old.version, old.status, old.approval?.decision, old.approval?.note], [1, 'revised', 'revise', 'короче начало']);
+  assert.equal((old.artifact as { scenes: { line: string }[] }).scenes[0].line, BOARD.scenes[0].line);
+  assert.throws(() => e.approve(p.id, 'script', 1), /устарела/);
+  const done = until(e, p.id, ev => ev.type === 'status' && ev.status === 'ready');
+  e.approve(p.id, 'script', 2);
+  await done;
+  assert.deepEqual(e.get(p.id)!.stages.script, { status: 'completed', version: 2 });
+});
+
+test('revise without Claude: simple rules, and the log says so', async () => {
+  const f = fakes({ claude: 'down' }), e = engine(f);
+  const p = e.create(settings);
+  await gateOpen(e, p.id);
+  await tick();
+  e.revise(p.id, 'script', 1, 'сцена 1: ночь');
+  await gateOpen(e, p.id, 2);
+  await tick();
+  const s = e.get(p.id)!;
+  assert.match(s.scenes[0].visual, /ночью/);
+  assert.doesNotMatch(s.scenes[1].visual, /ночью/);
+  assert.ok(s.log.some(l => l.id === 'script-v2' && /по простым правилам/.test(l.detail ?? '')));
+  e.revise(p.id, 'script', 2, 'сделай как-нибудь иначе');
+  await gateOpen(e, p.id, 3);
+  await tick();
+  assert.ok(e.get(p.id)!.log.some(l => l.id === 'script-v3' && /не понял/.test(l.detail ?? '')), 'an honest line when the note was not understood');
+});
+
+test('gates off: the run goes straight through, as before Inkframe 3', async () => {
+  const f = fakes(), e = engine(f, { gates: { script: false, storyboard: false, final: false } });
+  const p = e.create(settings);
+  await until(e, p.id, ev => ev.type === 'status' && ev.status === 'ready');
+  const s = e.get(p.id)!;
+  assert.equal(s.gate, undefined);
+  assert.deepEqual(s.stages.script, { status: 'completed', version: 1 });
+});
+
+test('a project saved before Inkframe 3 (no stages) opens and can be edited', async () => {
+  const f = fakes(), dir = mkdtempSync(join(tmpdir(), 'inkframe-'));
+  const e = new RealEngine({ dir, tools: f.tools, draftFps: 2, sketchFrames: 2 });
+  const p = e.create(settings);
+  await ready(e, p.id);
+  await tick(20);
+  const file = join(dir, p.id, 'project.json'), saved = json<{ state: Record<string, unknown> }>(file);
+  delete saved.state.stages;
+  writeFileSync(file, JSON.stringify(saved));
+  const again = new RealEngine({ dir, tools: f.tools, draftFps: 2, sketchFrames: 2 });
+  const s = again.get(p.id)!;
+  assert.deepEqual([s.stages.brief.status, s.stages.script.status, s.stages.paint.status, s.stages.storyboard.status], ['completed', 'completed', 'completed', 'pending']);
+  again.editScene(p.id, 1, 'ночь');
+  await until(again, p.id, ev => ev.type === 'scene.edited');
 });

@@ -57,7 +57,7 @@ export function Stage({ project: p, selected, error }: { project: ProjectState; 
         <span className="min-w-[170px] text-right text-mist-400">
           {error ? <span className="text-pen-soft">{error}</span>
             : p.status === 'done' ? 'MP4 собран' : p.status === 'building' ? 'Собираю MP4…' : p.status === 'ready' ? '100 % · можно собирать MP4'
-            : p.status === 'drafting' ? 'пишу сценарий…' : `${pct} % · осталось ${eta(p.etaSec)}`}
+            : p.status === 'drafting' ? 'пишу сценарий…' : p.status === 'awaiting' ? 'сценарий ждёт вашего решения' : `${pct} % · осталось ${eta(p.etaSec)}`}
         </span>
       </div>
     </section>

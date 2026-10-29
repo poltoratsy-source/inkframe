@@ -71,6 +71,24 @@ REQUEST: ${request}
 Reply with ONLY the whole updated scene as JSON (same shape: {"title", "line", "duration", "spec"}), no markdown fences.`;
 }
 
+/** The whole storyboard sent back with the author's note (the script gate's "Вернуть с замечанием"). */
+export function revisePrompt(s: StartSettings, board: Storyboard, note: string): string {
+  const n = sceneCount(s.duration);
+  return `You rewrite the storyboard of a short watercolour cartoon in Inkframe after the author read it and sent it back with a note.
+Do what the note asks; keep everything it does not mention. Same rules as before: language of every line, caption and label ${LANG[s.language]};
+about ${n} scenes (the note may ask for more or fewer, at most 12), total length about ${s.duration} s, each line short enough for its scene
+(a calm narrator says about 2 words per second).
+Allowed values: template ${TEMPLATES.join('|')}; setting ${SETTINGS.join('|')}; mood ${MOODS.join('|')}; prop ${PROP_IDS.join('|')}; color ${COLOR_NAMES.join('|')}; heroSize normal|big; pace slow|normal|fast.
+${s.ending === 'none' ? 'Do not use the "card" template.' : 'Keep the final "card" scene unless the note says otherwise.'}
+
+CURRENT STORYBOARD:
+${JSON.stringify({ title: board.title, scenes: board.scenes })}
+
+NOTE FROM THE AUTHOR: ${note}
+
+Reply with ONLY the whole updated storyboard as JSON (same shape: {"title", "scenes": [{"title", "line", "duration", "spec"}, ...]}), no markdown fences.`;
+}
+
 // ---------- parsing ----------
 /** The first JSON object in a reply (Claude sometimes wraps it in fences or a sentence). */
 export function extractJson(text: string): unknown {
@@ -177,6 +195,25 @@ export function templateStoryboard(s: StartSettings): Storyboard {
       spec: cleanSpec({ template: 'card', setting: 'sunset', mood: 'excited', title: codeword ? code : L.subTitle, subtitle: codeword ? L.codeHint : L.subHint, ...hero }) });
   }
   return { title: topic.replace(/\?$/, ''), scenes, by: 'template' };
+}
+
+// ---------- a sent-back script without AI ----------
+/** The author's note applied by simple rules: "сцена 2: …" goes to that scene (as a scene edit would), otherwise
+ *  quick words such as «ночь», «медленнее», «веселее» go to every scene. `understood: false` = nothing changed. */
+export function reviseByRules(board: Storyboard, note: string): { board: Storyboard; understood: boolean } {
+  const m = note.trim().match(/^(?:сцен[аеуы]?|scene)\s*(\d+)\s*[:—,.-]\s*(.+)$/is);
+  const scenes = board.scenes.map(sc => ({ ...sc, spec: { ...sc.spec } }));
+  let understood = false;
+  if (m) {
+    const i = Number(m[1]) - 1;
+    if (scenes[i]) { const r = editByRules(scenes[i], m[2]); scenes[i] = r.scene; understood = r.understood; }
+  } else if (!/^(?:реплика|текст реплики|скажи|line|say|подпись|надпись|текст|caption|title|заголовок)\s*[:—-]/i.test(note.trim())) {
+    for (const [i, sc] of scenes.entries()) {
+      const r = editByRules(sc, note);
+      if (r.understood && !r.voice) { scenes[i] = r.scene; understood = true; }
+    }
+  }
+  return { board: { ...board, scenes }, understood };
 }
 
 // ---------- edits without AI ----------

@@ -1,6 +1,6 @@
 // What the screens call. With a server: the API routes and the SSE stream. On the static demo site: the same
 // DemoEngine, running right here in the browser tab. The screens never need to know which one they talk to.
-import type { EngineEvent, ProjectSummary, ScenePatch, StartSettings, StudioEngine } from './engine/types';
+import type { EngineEvent, ProjectState, ProjectSummary, ScenePatch, StageId, StartSettings, StudioEngine } from './engine/types';
 import { STATIC_SITE } from './site';
 
 export interface SettingsInfo { hasKey: boolean; engine: string; staticSite?: boolean }
@@ -51,6 +51,12 @@ export const api = {
 
   editScene: (id: string, scene: number, request: string, patch?: ScenePatch): Promise<unknown> =>
     STATIC_SITE ? run(e => e.editScene(id, scene, request, patch)) : call(`/api/projects/${id}/edit`, post({ scene, request, ...patch })),
+
+  /** Approves a stage waiting at its gate, or sends it back with a note; answers with the project's new state. */
+  gate: (id: string, stage: StageId, version: number, decision: 'approve' | 'revise', note?: string): Promise<ProjectState> =>
+    STATIC_SITE
+      ? run(e => (decision === 'approve' ? e.approve(id, stage, version, note) : e.revise(id, stage, version, note ?? '')))
+      : call<ProjectState>(`/api/projects/${id}/gate`, post({ stage, version, decision, ...(note && { note }) })),
 
   build: (id: string): Promise<unknown> =>
     STATIC_SITE ? run(e => e.build(id)) : call(`/api/projects/${id}/build`, { method: 'POST' }),

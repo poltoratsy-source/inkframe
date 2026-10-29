@@ -12,6 +12,9 @@ import { Stage } from './Stage';
 import { EditPanel } from './EditPanel';
 import { Timeline } from './Timeline';
 import { BuildDialog } from './BuildDialog';
+import { ScriptGate } from './ScriptGate';
+import { StageRail } from '../board/StageRail';
+import { LIVE_STAGES } from '@/lib/store/types';
 
 const len = (s: number) => (s < 60 ? `${s} с` : `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`);
 
@@ -44,19 +47,31 @@ export function Studio({ id }: { id: string }) {
     try { await api.build(id); } catch (e) { setErr((e as Error).message); }
   };
   const ready = canBuild(p);
+  // the script gate covers the stage while it waits, and while a sent-back script is being rewritten
+  const gateOpen = p.gate?.stage === 'script' || p.stages.script.status === 'revised';
 
   return (
-    <div className="grid h-screen min-h-[760px] grid-rows-[56px_minmax(0,1fr)_auto] overflow-hidden">
+    <div className="grid h-screen min-h-[760px] grid-rows-[56px_40px_minmax(0,1fr)_auto] overflow-hidden">
       <TopBar middle={<div className="truncate text-mist-300">Проект: «{p.title}» · {len(p.settings.duration)} · {style}</div>}>
         <span className="rounded-full bg-ink-650 px-3 py-1.5 text-[13px] text-mist-200">Рендер: 3 потока{p.engine === 'demo' ? ' · демо' : ''}</span>
-        <button onClick={build} disabled={!ready || p.status === 'building'} title={ready ? '' : 'Сначала дождись, пока все сцены будут готовы'}
+        <button onClick={build} disabled={!ready || p.status === 'building'}
+          title={ready ? '' : p.gate ? 'Сначала утвердите сценарий' : 'Сначала дождись, пока все сцены будут готовы'}
           className="rounded-[9px] bg-pen px-4 py-2 font-bold text-pen-ink hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40">
           {p.status === 'building' ? 'Собираю…' : p.video ? '▶ Готовый MP4' : 'Собрать MP4'}
         </button>
       </TopBar>
+      <StageRail stages={LIVE_STAGES.map(id => ({ id, ...p.stages[id] }))} />
       <div className="grid min-h-0 grid-cols-[330px_minmax(0,1fr)_320px]">
         <WorkLog idea={p.settings.idea} log={p.log} />
-        <Stage project={p} selected={selected} error={err} />
+        <div className="relative grid min-h-0 min-w-0">
+          <Stage project={p} selected={selected} error={err} />
+          {gateOpen && (
+            // narrow screens: the three-column studio does not fit yet, so the gate opens on top of everything
+            <div className="absolute inset-0 z-10 overflow-y-auto bg-ink-900/85 px-5 py-4 max-lg:fixed max-lg:inset-x-0 max-lg:top-24 max-lg:bottom-0 max-lg:z-40 max-lg:px-4">
+              <ScriptGate project={p} />
+            </div>
+          )}
+        </div>
         <EditPanel project={p} n={selected} />
       </div>
       <Timeline project={p} selected={selected} onPick={setPicked} />

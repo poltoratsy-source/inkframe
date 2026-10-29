@@ -33,8 +33,9 @@ test('an edit sent mid-run waits for the run and then redraws the scene', async 
   const e = new DemoEngine({ speed: 1000, gates: M1 });
   const p = create(e);
   await until(e, p.id, ev => ev.type === 'stage' && ev.stage === 'paint' && ev.status === 'in_progress');
+  const edited = until(e, p.id, ev => ev.type === 'scene.edited');
   e.editScene(p.id, 2, 'ночь');
-  await until(e, p.id, ev => ev.type === 'scene.edited');
+  await edited;
   const s = e.get(p.id)!;
   assert.equal(s.status, 'ready');
   assert.equal(s.scenes[1].edited, true);
@@ -45,9 +46,25 @@ test('build is refused until every scene is done, then hands out the video', asy
   const p = create(e);
   assert.throws(() => e.build(p.id), /not ready/);
   await until(e, p.id, ev => ev.type === 'status' && ev.status === 'ready');
+  // listen before acting: the cut's events must not be able to slip past a listener added after build()
+  const done = until(e, p.id, ev => ev.type === 'status' && ev.status === 'done');
   e.build(p.id);
-  await until(e, p.id, ev => ev.type === 'status' && ev.status === 'done');
+  await done;
   assert.equal(e.get(p.id)!.video, '/demo/result.mp4');
+});
+
+test('a slow moment inside build() never pushes the queued script out before anyone could listen', async () => {
+  // the flaky failure of M5: a GC pause or a busy CPU inside build() let the clock pass the whole (4 ms at speed 1000)
+  // cut script, so «done» was emitted synchronously and a listener added after build() waited forever
+  const e = new DemoEngine({ speed: 1000, gates: M1 });
+  const p = create(e);
+  await until(e, p.id, ev => ev.type === 'status' && ev.status === 'ready');
+  const real = Date.now;
+  let skew = 0;
+  Date.now = () => real() + (skew += 50);   // every look at the clock is 50 ms later
+  try { e.build(p.id); } finally { Date.now = real; }
+  assert.equal(e.get(p.id)!.status, 'building', 'only the events at 0 ms come out inside build()');
+  await until(e, p.id, ev => ev.type === 'status' && ev.status === 'done');
 });
 
 test('unknown projects and scenes', async () => {
@@ -68,9 +85,10 @@ test('new words from the edit panel show at once and redraw the scene', async ()
   const e = new DemoEngine({ speed: 1000, gates: M1 });
   const p = create(e);
   await until(e, p.id, ev => ev.type === 'status' && ev.status === 'ready');
+  const edited = until(e, p.id, ev => ev.type === 'scene.edited');
   e.editScene(p.id, 1, '', { line: 'Новая реплика' });
   assert.equal(e.get(p.id)!.scenes[0].line, 'Новая реплика');
-  await until(e, p.id, ev => ev.type === 'scene.edited');
+  await edited;
   assert.equal(e.get(p.id)!.scenes[0].edited, true);
 });
 

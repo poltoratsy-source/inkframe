@@ -192,12 +192,16 @@ export class DemoEngine implements StudioEngine {
     e.playing = true;
     const script = make(), t0 = Date.now();
     let i = 0;
-    const tick = () => {
-      while (i < script.length && script[i].at <= Date.now() - t0) this.emit(e, script[i++].ev);
+    // The first pass runs inside the call that queued the script (create, build, approve…) and emits only the events
+    // at 0 ms, whatever the clock says: a slow moment (GC, a busy CPU) must not push later events — or the whole script,
+    // at high demo speeds — out synchronously, before the caller could subscribe. Later passes go by the clock.
+    const tick = (first = false) => {
+      const now = first ? 0 : Date.now() - t0;
+      while (i < script.length && script[i].at <= now) this.emit(e, script[i++].ev);
       if (i < script.length) setTimeout(tick, Math.max(0, script[i].at - (Date.now() - t0)));
       else this.playNext(e);
     };
-    tick();
+    tick(true);
   }
 
   private emit(e: Entry, ev: EngineEvent) {

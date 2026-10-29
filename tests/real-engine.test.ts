@@ -1,9 +1,9 @@
 // RealEngine end to end with fake tools: no Claude, Chrome, edge-tts or ffmpeg needed.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
+import { tmp } from './helpers/tmp.ts';
 import { RealEngine, type RealTools } from '../lib/engine/real.ts';
 import { SR } from '../lib/real/audio.ts';
 import { DEFAULT_SETTINGS } from '../lib/options.ts';
@@ -70,7 +70,9 @@ const tick = (ms = 30) => new Promise(r => setTimeout(r, ms));
 const dirOf = (e: RealEngine, id: string) => e.fileOf(id, 'stages/script.json')!.replace(/\/stages\/script\.json$/, '');
 const json = <T>(f: string): T => JSON.parse(readFileSync(f, 'utf8'));
 const journal = (dir: string): LoggedEvent[] => readFileSync(join(dir, 'events.jsonl'), 'utf8').trim().split('\n').map(l => JSON.parse(l));
-const engine = (f: ReturnType<typeof fakes>, more = {}) => new RealEngine({ dir: mkdtempSync(join(tmpdir(), 'inkframe-')), tools: f.tools, draftFps: 2, sketchFrames: 2, ...more });
+/** The gates of M1–M3: only the script stops; the storyboard and final gates are tested in gates-m4.test.ts. */
+const M1 = { script: true, storyboard: false, final: false };
+const engine = (f: ReturnType<typeof fakes>, more = {}) => new RealEngine({ dir: tmp(), tools: f.tools, draftFps: 2, sketchFrames: 2, gates: M1, ...more });
 
 test('a run: Claude storyboard, voice fits the scenes, sketch then colour drafts for every scene', async () => {
   const f = fakes(), e = engine(f);
@@ -150,12 +152,12 @@ test('edits and builds are refused when they make no sense', async () => {
 });
 
 test('projects survive a restart', async () => {
-  const f = fakes(), dir = mkdtempSync(join(tmpdir(), 'inkframe-'));
-  const e = new RealEngine({ dir, tools: f.tools, draftFps: 2, sketchFrames: 2 });
+  const f = fakes(), dir = tmp();
+  const e = new RealEngine({ dir, tools: f.tools, draftFps: 2, sketchFrames: 2, gates: M1 });
   const p = e.create(settings);
   await ready(e, p.id);
   await new Promise(r => setTimeout(r, 20));
-  const again = new RealEngine({ dir, tools: f.tools });
+  const again = new RealEngine({ dir, tools: f.tools, gates: M1 });
   assert.equal(again.get(p.id)?.scenes.length, 3);
   assert.equal(again.list()[0].id, p.id);
 });
@@ -259,15 +261,15 @@ test('gates off: the run goes straight through, as before Inkframe 3', async () 
 });
 
 test('a project saved before Inkframe 3 (no stages) opens and can be edited', async () => {
-  const f = fakes(), dir = mkdtempSync(join(tmpdir(), 'inkframe-'));
-  const e = new RealEngine({ dir, tools: f.tools, draftFps: 2, sketchFrames: 2 });
+  const f = fakes(), dir = tmp();
+  const e = new RealEngine({ dir, tools: f.tools, draftFps: 2, sketchFrames: 2, gates: M1 });
   const p = e.create(settings);
   await ready(e, p.id);
   await tick(20);
   const file = join(dir, p.id, 'project.json'), saved = json<{ state: Record<string, unknown> }>(file);
   delete saved.state.stages;
   writeFileSync(file, JSON.stringify(saved));
-  const again = new RealEngine({ dir, tools: f.tools, draftFps: 2, sketchFrames: 2 });
+  const again = new RealEngine({ dir, tools: f.tools, draftFps: 2, sketchFrames: 2, gates: M1 });
   const s = again.get(p.id)!;
   assert.deepEqual([s.stages.brief.status, s.stages.script.status, s.stages.paint.status, s.stages.storyboard.status], ['completed', 'completed', 'completed', 'pending']);
   again.editScene(p.id, 1, 'ночь');
@@ -371,17 +373,17 @@ test('a WARN hands out the MP4 with the remarks; a review that cannot run is a W
 });
 
 test('the clip cache knows the renderer version: a new renderer paints every clip again', async () => {
-  const f = fakes(), dir = mkdtempSync(join(tmpdir(), 'inkframe-'));
-  const a = new RealEngine({ dir, tools: f.tools, draftFps: 2, sketchFrames: 2, rendererVersion: 'a' });
+  const f = fakes(), dir = tmp();
+  const a = new RealEngine({ dir, tools: f.tools, draftFps: 2, sketchFrames: 2, rendererVersion: 'a', gates: M1 });
   const p = a.create(settings);
   await ready(a, p.id);
   await built(a, p.id);
   assert.equal(clipsMade(f), 3);
   await tick(20);
-  const same = new RealEngine({ dir, tools: f.tools, rendererVersion: 'a' });
+  const same = new RealEngine({ dir, tools: f.tools, rendererVersion: 'a', gates: M1 });
   await built(same, p.id);
   assert.equal(clipsMade(f), 3, 'the same renderer: every clip from the cache');
-  const b = new RealEngine({ dir, tools: f.tools, rendererVersion: 'b' });
+  const b = new RealEngine({ dir, tools: f.tools, rendererVersion: 'b', gates: M1 });
   await built(b, p.id);
   assert.equal(clipsMade(f), 6, 'a changed renderer: all three painted again');
   assert.equal(readdirSync(join(dir, p.id, 'clips')).length, 3, 'the old clips are cleaned away');

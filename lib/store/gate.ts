@@ -1,6 +1,6 @@
 // The rules of a gate, as pure functions on a Checkpoint. The file store (stages.ts) and the browser demo both use
 // them, so "approve an old version" or "complete without approval" fails the same way everywhere.
-import { STAGE_IDS, STAGE_NAMES, STAGE_STATUSES, type Checkpoint, type StageId } from './types';
+import { STAGE_IDS, STAGE_NAMES, STAGE_STATUSES, overCap, type Checkpoint, type Estimate, type SceneNote, type StageId } from './types';
 
 /** A refused gate call; `status` is the HTTP status the API answers with. */
 export class GateError extends Error {
@@ -24,13 +24,16 @@ export function checkCheckpoint(cp: Checkpoint): Checkpoint {
 
 /** A stage shows a new result. The version goes up only if the previous one was already shown (had an artifact);
  *  the caller keeps the previous checkpoint in history. Gated → awaiting, else completed at once. */
-export function openVersion(prev: Checkpoint | undefined, stage: StageId, artifact: unknown, gated: boolean, at = now()): Checkpoint {
+export function openVersion(prev: Checkpoint | undefined, stage: StageId, artifact: unknown, gated: boolean, at = now(), estimate?: Estimate): Checkpoint {
   const version = prev ? (prev.artifact !== undefined ? prev.version + 1 : prev.version) : 1;
   return checkCheckpoint({
     stage, version, artifact, gate: gated, status: gated ? 'awaiting' : 'completed',
     startedAt: prev && prev.artifact === undefined ? prev.startedAt : at, updatedAt: at,
+    ...(estimate && { estimate }),
   });
 }
+
+const mins = (s: number) => (s < 90 ? `${Math.round(s)} с` : `${Math.round(s / 60)} мин`);
 
 const waiting = (cp: Checkpoint | undefined, stage: StageId, version: number): Checkpoint => {
   if (!cp || !cp.gate) throw new GateError(`Этап «${STAGE_NAMES[stage]}» сейчас не ждёт решения`, 409);
@@ -41,20 +44,27 @@ const waiting = (cp: Checkpoint | undefined, stage: StageId, version: number): C
   return cp;
 };
 
-/** Approves `version`. A second approve of the same version changes nothing (`changed: false`). */
-export function approveVersion(cp: Checkpoint | undefined, stage: StageId, version: number, note?: string, at = now()): { cp: Checkpoint; changed: boolean } {
+/** Approves `version`. A second approve of the same version changes nothing (`changed: false`).
+ *  Budget mode `cap`: when the estimate on this gate is over the cap, approve needs `allowOverCap` (409 without it). */
+export function approveVersion(cp: Checkpoint | undefined, stage: StageId, version: number, note?: string, at = now(), allowOverCap = false): { cp: Checkpoint; changed: boolean } {
   if (cp && cp.version === version && cp.approval?.decision === 'approve' && cp.approval.version === version) return { cp, changed: false };
   const cur = waiting(cp, stage, version), text = note?.trim();
+  const over = overCap(cur.estimate);
+  if (over && !allowOverCap)
+    throw new GateError(`Оценка ≈ ${mins(cur.estimate!.totalSec)} выше лимита ${mins(cur.estimate!.capSec!)}: отметьте «Разрешаю превысить лимит», чтобы утвердить`, 409);
   return {
-    cp: checkCheckpoint({ ...cur, status: 'completed', updatedAt: at, approval: { decision: 'approve', version, ...(text && { note: text.slice(0, 500) }), at } }),
+    cp: checkCheckpoint({ ...cur, status: 'completed', updatedAt: at, approval: { decision: 'approve', version, ...(text && { note: text.slice(0, 500) }), ...(over && { overCap: true }), at } }),
     changed: true,
   };
 }
 
 /** Sends `version` back with a note; the stage is `revised` until its next version opens. */
-export function reviseVersion(cp: Checkpoint | undefined, stage: StageId, version: number, note: string, at = now()): Checkpoint {
-  const text = note.trim();
+/** `scenes`: scenes marked one by one, each with its own note (storyboard: redraw these; final: redo this scene). */
+export function reviseVersion(cp: Checkpoint | undefined, stage: StageId, version: number, note: string, at = now(), scenes?: SceneNote[]): Checkpoint {
+  const marks = (scenes ?? []).map(x => ({ n: Math.trunc(Number(x.n)), note: String(x.note ?? '').trim().slice(0, 300) }))
+    .filter(x => x.n >= 1 && x.n <= 12 && x.note).slice(0, 12);
+  const text = note.trim() || marks.map(x => `Сцена ${x.n}: ${x.note}`).join('; ');
   if (!text) throw new GateError('Напишите замечание — что переделать', 400);
   const cur = waiting(cp, stage, version);
-  return checkCheckpoint({ ...cur, status: 'revised', updatedAt: at, approval: { decision: 'revise', version, note: text.slice(0, 500), at } });
+  return checkCheckpoint({ ...cur, status: 'revised', updatedAt: at, approval: { decision: 'revise', version, note: text.slice(0, 500), ...(marks.length && { scenes: marks }), at } });
 }

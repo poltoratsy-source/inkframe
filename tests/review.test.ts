@@ -3,16 +3,16 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { tmp, tmpForFile } from './helpers/tmp.ts';
 import { probe, reviewVideo, type ReviewPlan } from '../lib/real/review.ts';
 import { writeAss } from '../lib/real/assemble.ts';
 import { rendererVersion } from '../lib/real/painter.ts';
 import type { Review } from '../lib/store/types.ts';
 
 const noFfmpeg = spawnSync('ffmpeg', ['-version']).status !== 0 || spawnSync('ffprobe', ['-version']).status !== 0;
-const dir = mkdtempSync(join(tmpdir(), 'inkframe-review-'));
+const dir = tmpForFile('inkframe-review-');
 
 /** A 4 s, 320×180, 24 fps clip: a moving test picture and a 440 Hz tone, changed by `vf` / `af`. */
 function clip(name: string, o: { vf?: string; af?: string; silent?: boolean } = {}) {
@@ -142,7 +142,7 @@ test('without ffprobe the file is read with ffmpeg -i', { skip: noFfmpeg }, asyn
 });
 
 test('the renderer version changes with the renderer, not with the voice script', () => {
-  const r = mkdtempSync(join(tmpdir(), 'inkframe-renderer-')), mods = join(r, 'none');
+  const r = tmp('inkframe-renderer-'), mods = join(r, 'none');
   mkdirSync(join(r, 'engine'));
   writeFileSync(join(r, 'engine', 'core.js'), 'const a = 1;');
   writeFileSync(join(r, 'tts.py'), 'print(1)');

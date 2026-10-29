@@ -1,6 +1,25 @@
 'use client';
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { LogStep } from '@/lib/engine/types';
+import { alternativesText } from '@/lib/store/decisions';
+
+const SURE = { high: 'уверен', medium: 'скорее да', low: 'запасной вариант' } as const;
+
+/** A «решение: …» line: short; a click opens what else there was and how sure the choice is. */
+function DecisionLine({ l }: { l: LogStep }) {
+  const [open, setOpen] = useState(false), d = l.decision!, alt = alternativesText(d);
+  return (
+    <div className="fade-in flex items-start gap-[9px] pl-[27px] text-[12.5px] leading-[1.35]">
+      <button type="button" onClick={() => setOpen(o => !o)} aria-expanded={open}
+        className="min-w-0 text-left text-mist-300 hover:text-mist-100 focus-visible:outline focus-visible:outline-pen">
+        <span className={d.what === 'fallback' ? 'text-warn' : ''}>{l.text}</span>
+        {open && <span className="mt-0.5 block text-mist-400">
+          {d.reason}{alt && <><br />Были варианты: {alt}</>}<br />{SURE[d.confidence]}
+        </span>}
+      </button>
+    </div>
+  );
+}
 
 const DOT: Record<LogStep['status'], string> = {
   ok: 'bg-ok-bg text-ok', run: 'bg-pen text-pen-ink dot-run', wait: 'bg-ink-600 text-mist-500', err: 'bg-red-900 text-red-200',
@@ -20,7 +39,7 @@ export function WorkLog({ idea, log }: { idea: string; log: LogStep[] }) {
       <h3 className="label">Клод сейчас делает</h3>
       <div className="flex min-h-0 flex-col gap-[9px] overflow-y-auto pr-1">
         {log.length === 0 && <div className="text-mist-400">Начинаю…</div>}
-        {log.map((l, i) => (
+        {log.map((l, i) => l.decision ? <DecisionLine key={l.id} l={l} /> : (
           <div key={l.id} className="fade-in flex items-start gap-[9px] leading-[1.35]">
             <div className={`mt-px flex size-[18px] flex-none items-center justify-center rounded-full text-[11px] ${gateWait(l) ? 'bg-gate-bg text-gate' : DOT[l.status]}`}>
               {l.status === 'ok' ? '✓' : l.status === 'run' ? '●' : l.status === 'err' ? '!' : gateWait(l) ? '?' : l.id === 'music' ? '♪' : (l.id.match(/\d+/)?.[0] ?? i + 1)}

@@ -13,8 +13,10 @@ import { EditPanel } from './EditPanel';
 import { Timeline } from './Timeline';
 import { BuildDialog } from './BuildDialog';
 import { ScriptGate } from './ScriptGate';
+import { StoryboardGate } from './StoryboardGate';
+import { FinalGate } from './FinalGate';
 import { StageRail } from '../board/StageRail';
-import { LIVE_STAGES } from '@/lib/store/types';
+import { LIVE_STAGES, STAGE_NAMES } from '@/lib/store/types';
 
 const len = (s: number) => (s < 60 ? `${s} с` : `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`);
 
@@ -49,8 +51,9 @@ export function Studio({ id }: { id: string }) {
     try { await api.build(id); } catch (e) { setErr((e as Error).message); }
   };
   const ready = canBuild(p);
-  // the script gate covers the stage while it waits, and while a sent-back script is being rewritten
-  const gateOpen = p.gate?.stage === 'script' || p.stages.script.status === 'revised';
+  // a gate covers the stage while it waits; a sent-back script or storyboard keeps its panel while it is redone
+  // (a sent-back final does not: the scene is redrawn on the stage, right there)
+  const gateStage = p.gate?.stage ?? (p.stages.script.status === 'revised' ? 'script' : p.stages.storyboard.status === 'revised' ? 'storyboard' : undefined);
 
   return (
     <div className="grid h-screen min-h-[760px] grid-rows-[56px_40px_minmax(0,1fr)_auto] overflow-hidden">
@@ -61,8 +64,8 @@ export function Studio({ id }: { id: string }) {
             Проверка не пройдена — почему?
           </button>
         )}
-        <button onClick={build} disabled={!ready || p.status === 'building'}
-          title={ready ? '' : p.gate ? 'Сначала утвердите сценарий' : 'Сначала дождись, пока все сцены будут готовы'}
+        <button onClick={build} disabled={!!p.gate || (!p.video && !ready) || p.status === 'building'}
+          title={p.gate ? `Сначала решите на панели «${STAGE_NAMES[p.gate.stage]}»` : ready || p.video ? '' : 'Сначала дождись, пока все сцены будут готовы'}
           className="rounded-[9px] bg-pen px-4 py-2 font-bold text-pen-ink hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40">
           {p.status === 'building' ? 'Собираю…' : p.video ? '▶ Готовый MP4' : 'Собрать MP4'}
         </button>
@@ -72,10 +75,10 @@ export function Studio({ id }: { id: string }) {
         <WorkLog idea={p.settings.idea} log={p.log} />
         <div className="relative grid min-h-0 min-w-0">
           <Stage project={p} selected={selected} error={err} />
-          {gateOpen && (
+          {gateStage && (
             // narrow screens: the three-column studio does not fit yet, so the gate opens on top of everything
             <div className="absolute inset-0 z-10 overflow-y-auto bg-ink-900/85 px-5 py-4 max-lg:fixed max-lg:inset-x-0 max-lg:top-24 max-lg:bottom-0 max-lg:z-40 max-lg:px-4">
-              <ScriptGate project={p} />
+              {gateStage === 'script' ? <ScriptGate project={p} /> : gateStage === 'storyboard' ? <StoryboardGate project={p} /> : gateStage === 'final' ? <FinalGate project={p} /> : null}
             </div>
           )}
         </div>

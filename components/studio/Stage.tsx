@@ -1,6 +1,7 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
 import type { Look, ProjectState } from '@/lib/engine/types';
+import { STAGE_NAMES } from '@/lib/store/types';
 
 const clock = (s: number) => `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
 const eta = (s: number) => (s < 60 ? `~${Math.max(1, Math.round(s))} с` : `~${Math.round(s / 60)} мин`);
@@ -57,7 +58,8 @@ export function Stage({ project: p, selected, error }: { project: ProjectState; 
         <span className="min-w-[170px] text-right text-mist-400">
           {error ? <span className="text-pen-soft">{error}</span>
             : p.status === 'done' ? 'MP4 собран' : p.status === 'building' ? 'Собираю MP4…' : p.status === 'ready' ? '100 % · можно собирать MP4'
-            : p.status === 'drafting' ? 'пишу сценарий…' : p.status === 'awaiting' ? 'сценарий ждёт вашего решения' : `${pct} % · осталось ${eta(p.etaSec)}`}
+            : p.status === 'drafting' ? (p.stages.script.status === 'completed' ? 'рисую раскадровку…' : 'пишу сценарий…')
+            : p.status === 'awaiting' ? `${STAGE_NAMES[p.gate?.stage ?? 'script'].toLowerCase()} ждёт вашего решения` : `${pct} % · осталось ${eta(p.etaSec)}`}
         </span>
       </div>
     </section>

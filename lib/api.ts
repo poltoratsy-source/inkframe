@@ -1,6 +1,6 @@
 // What the screens call. With a server: the API routes and the SSE stream. On the static demo site: the same
 // DemoEngine, running right here in the browser tab. The screens never need to know which one they talk to.
-import type { EngineEvent, ProjectState, ProjectSummary, Review, ScenePatch, StageId, StartSettings, StudioEngine } from './engine/types';
+import type { EngineEvent, ProjectState, ProjectSummary, Review, SceneNote, ScenePatch, StageId, StartSettings, StudioEngine } from './engine/types';
 import { STATIC_SITE } from './site';
 
 export interface SettingsInfo { hasKey: boolean; engine: string; staticSite?: boolean }
@@ -52,11 +52,13 @@ export const api = {
   editScene: (id: string, scene: number, request: string, patch?: ScenePatch): Promise<unknown> =>
     STATIC_SITE ? run(e => e.editScene(id, scene, request, patch)) : call(`/api/projects/${id}/edit`, post({ scene, request, ...patch })),
 
-  /** Approves a stage waiting at its gate, or sends it back with a note; answers with the project's new state. */
-  gate: (id: string, stage: StageId, version: number, decision: 'approve' | 'revise', note?: string): Promise<ProjectState> =>
+  /** Approves a stage waiting at its gate, or sends it back with a note; answers with the project's new state.
+   *  `scenes`: scenes marked one by one (storyboard «перерисовать», the final's scene to redo); `allowOverCap`: the
+   *  permission to go over the budget cap. */
+  gate: (id: string, stage: StageId, version: number, decision: 'approve' | 'revise', note?: string, o: { scenes?: SceneNote[]; allowOverCap?: boolean } = {}): Promise<ProjectState> =>
     STATIC_SITE
-      ? run(e => (decision === 'approve' ? e.approve(id, stage, version, note) : e.revise(id, stage, version, note ?? '')))
-      : call<ProjectState>(`/api/projects/${id}/gate`, post({ stage, version, decision, ...(note && { note }) })),
+      ? run(e => (decision === 'approve' ? e.approve(id, stage, version, note, { allowOverCap: o.allowOverCap }) : e.revise(id, stage, version, note ?? '', { scenes: o.scenes })))
+      : call<ProjectState>(`/api/projects/${id}/gate`, post({ stage, version, decision, ...(note && { note }), ...(o.scenes?.length && { scenes: o.scenes }), ...(o.allowOverCap && { allowOverCap: true }) })),
 
   build: (id: string): Promise<unknown> =>
     STATIC_SITE ? run(e => e.build(id)) : call(`/api/projects/${id}/build`, { method: 'POST' }),

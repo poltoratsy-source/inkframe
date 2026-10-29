@@ -3,7 +3,8 @@
 import type { StartSettings } from '../engine/types';
 import { COLOR_NAMES, MOODS, PROP_IDS, SETTINGS, TEMPLATES, cleanSpec, words, type PropId, type SceneSpec, type SettingId } from './scene-spec';
 
-export interface BoardScene { title: string; line: string; duration: number; spec: SceneSpec }
+/** `why`: one sentence on why this template shows the step best (the decision log); optional, Claude writes it. */
+export interface BoardScene { title: string; line: string; duration: number; spec: SceneSpec; why?: string }
 export interface Storyboard { title: string; scenes: BoardScene[]; by: 'claude' | 'template' }
 
 export const sceneCount = (sec: number) => Math.max(3, Math.min(10, Math.round(sec / 7)));
@@ -49,13 +50,15 @@ at most ${wordsFor(per[0])} words for a ${per[0]} s scene, natural spoken ${LANG
 - "caption": optional big words at the top of the frame, at most 6 words (the key fact of the scene, not the whole line)
 - "labels": optional, object template only, up to 2 labels of 1-3 words
 - "pace": optional, slow | fast
+- "why" (next to "spec", not inside it): one short sentence in ${LANG[s.language]} — why this template and these props show
+  this step best (it goes to the studio's decision log)
 
 Make it one small story: a hook in the first scene (a question or a surprise), then the explanation step by step with
 the clearest possible picture for each step, a satisfying answer, then the ending. Facts must be correct. Pick props that
 really show the idea; never invent props or templates outside the lists.
 
 Reply with ONLY a JSON object, no markdown fences:
-{"title": "...", "scenes": [{"title": "...", "line": "...", "duration": ${per[0]}, "spec": {"template": "host", "setting": "sky", "mood": "happy", "prop": "sun", "caption": "..."}}, ...]}`;
+{"title": "...", "scenes": [{"title": "...", "line": "...", "duration": ${per[0]}, "why": "...", "spec": {"template": "host", "setting": "sky", "mood": "happy", "prop": "sun", "caption": "..."}}, ...]}`;
 }
 
 export function editPrompt(s: StartSettings, scene: BoardScene, request: string): string {
@@ -105,8 +108,8 @@ export function cleanScene(v: unknown, fallbackDuration: number, s: StartSetting
   if (!line) return undefined;
   const spec = cleanSpec(o.spec);
   if (s.hero === 'none') spec.hero = false;
-  const d = Number(o.duration);
-  return { title: words(o.title, 40) ?? line.split(/[.!?]/)[0].slice(0, 40), line, duration: d >= 2 && d <= 40 ? Math.round(d * 10) / 10 : fallbackDuration, spec };
+  const d = Number(o.duration), why = words(o.why, 160);
+  return { title: words(o.title, 40) ?? line.split(/[.!?]/)[0].slice(0, 40), line, duration: d >= 2 && d <= 40 ? Math.round(d * 10) / 10 : fallbackDuration, spec, ...(why && { why }) };
 }
 
 export function cleanStoryboard(raw: unknown, s: StartSettings): Storyboard {
@@ -180,18 +183,21 @@ export function templateStoryboard(s: StartSettings): Storyboard {
   const n = sceneCount(s.duration), per = splitDurations(s.duration, n), hero = s.hero === 'none' ? { hero: false } : {};
   const withCard = s.ending !== 'none';
   const scenes: BoardScene[] = [];
-  scenes.push({ title: L.titles[0], line: L.hello(topic), duration: per[0], spec: cleanSpec({ template: 'host', setting, mood: 'excited', mood2: 'thinking', caption: words(topic, 42), ...hero }) });
+  const WHY = s.language === 'en'
+    ? { open: 'template storyboard: the host opens with the question', middle: 'template storyboard: close-ups and the host take turns', card: 'template storyboard: the end card with the code word' }
+    : { open: 'раскадровка по шаблону: начинает ведущий с вопросом', middle: 'раскадровка по шаблону: крупный предмет и ведущий по очереди', card: 'раскадровка по шаблону: финальная карточка с кодовым словом' };
+  scenes.push({ title: L.titles[0], line: L.hello(topic), duration: per[0], why: WHY.open, spec: cleanSpec({ template: 'host', setting, mood: 'excited', mood2: 'thinking', caption: words(topic, 42), ...hero }) });
   const middle = n - 1 - (withCard ? 1 : 0);
   for (let i = 0; i < middle; i++) {
     const last = i === middle - 1 && !withCard;
     scenes.push({
-      title: L.titles[Math.min(1 + i, 4)], line: i === 0 ? L.look : L.steps[Math.min(i - 1, 2)], duration: per[1 + i],
+      title: L.titles[Math.min(1 + i, 4)], line: i === 0 ? L.look : L.steps[Math.min(i - 1, 2)], duration: per[1 + i], why: WHY.middle,
       spec: cleanSpec({ template: i % 2 === 0 ? 'object' : 'host', setting, mood: last ? 'proud' : i % 2 ? 'idea' : 'thinking', prop, ...hero }),
     });
   }
   if (withCard) {
     const codeword = s.ending === 'codeword';
-    scenes.push({ title: L.titles[5], line: codeword ? L.close(code) : L.sub, duration: per[n - 1],
+    scenes.push({ title: L.titles[5], line: codeword ? L.close(code) : L.sub, duration: per[n - 1], why: WHY.card,
       spec: cleanSpec({ template: 'card', setting: 'sunset', mood: 'excited', title: codeword ? code : L.subTitle, subtitle: codeword ? L.codeHint : L.subHint, ...hero }) });
   }
   return { title: topic.replace(/\?$/, ''), scenes, by: 'template' };

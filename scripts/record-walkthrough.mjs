@@ -2,6 +2,7 @@
 // Clicks through the whole demo like a visitor would and records it: start screen → "Начать рисовать" →
 // the script gate → "Утвердить" → the cartoon draws itself → quick edit of scene 2 → free-text edit of scene 3 → "Собрать MP4".
 // Writes walkthrough.mp4 plus five screenshots. Needs ffmpeg and a Chrome (see scripts/chrome.mjs).
+// It walks the M1 flow (only the script gate): run the studio with INKFRAME_GATES=script while recording.
 import puppeteer from 'puppeteer-core';
 import { spawn } from 'node:child_process';
 import { mkdirSync } from 'node:fs';

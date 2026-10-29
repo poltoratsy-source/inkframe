@@ -1,9 +1,13 @@
 // Timed event scripts for the demo engine: what a real run looks like, played from pre-rendered frames.
 import { frameSrc, type DemoCatalog } from './demo-catalog';
-import type { EngineEvent, Look, ProjectState, SceneBoard, TimedEvent } from './types';
+import type { EngineEvent, Estimate, Look, ProjectState, SceneBoard, StageId, TimedEvent } from './types';
 import { MUSIC_NAMES, VOICE_NAMES } from '../options';
+import { FALLBACK_SPEED, estimate } from '../store/estimate';
+import { DEFAULT_BUDGET, type BudgetPolicy, type SceneNote } from '../store/types';
 
 const SKETCH_MS = 450, COLOR_MS = 600, FPS = 12;
+/** The template each catalog scene of «Как работает лидар» was painted with (for the contact sheet and decisions). */
+const DEMO_TEMPLATES = ['host', 'object', 'object', 'compare', 'object', 'host'];
 
 export function sceneCountFor(durationSec: number): number {
   return Math.max(3, Math.min(6, Math.round(durationSec / 8)));
@@ -29,7 +33,7 @@ export function storyboardFor(p: ProjectState, c: DemoCatalog): (SceneBoard & { 
   let start = 0;
   return pick(count, c.scenes.length).map((ci, i) => {
     const duration = i === count - 1 ? p.settings.duration - base * (count - 1) : base;
-    const b = { n: i + 1, title: c.scenes[ci].title, visual: c.scenes[ci].visual, line: c.scenes[ci].line, start, duration, catalog: ci + 1 };
+    const b = { n: i + 1, title: c.scenes[ci].title, visual: c.scenes[ci].visual, line: c.scenes[ci].line, start, duration, catalog: ci + 1, template: DEMO_TEMPLATES[ci] ?? 'host' };
     start += duration;
     return b;
   });
@@ -53,9 +57,17 @@ function drawScene(w: ReturnType<typeof writer>, c: DemoCatalog, n: number, cata
   w.emit({ type: 'scene.status', n, status: 'done' });
 }
 
+/** The estimate the demo shows on a gate: the real engine's formula with its fallback speed (the demo paints nothing). */
+export function demoEstimate(p: ProjectState, c: DemoCatalog, stage: StageId, budget: BudgetPolicy = DEFAULT_BUDGET, keys = true): Estimate {
+  return estimate({
+    stage, draftFps: 6, sketchFrames: 5, finalFps: FPS, overlap: .4, workers: 3, speed: FALLBACK_SPEED, claudeMade: 0, budget,
+    scenes: storyboardFor(p, c).map(b => ({ duration: b.duration, key: stage === 'script' && keys, draft: true, final: true, voice: p.settings.voice !== 'none' })),
+  });
+}
+
 /** Writing the script (version 1, or the next version after a note). Gated: ends with the gate open and the run
  *  stopped in `awaiting`; the rest comes from buildProduceScript once the script is approved. */
-export function buildWriteScript(p: ProjectState, c: DemoCatalog, speed = 1, o: { version?: number; gated?: boolean; note?: string } = {}): TimedEvent[] {
+export function buildWriteScript(p: ProjectState, c: DemoCatalog, speed = 1, o: { version?: number; gated?: boolean; note?: string; estimate?: Estimate; storyboardNext?: boolean } = {}): TimedEvent[] {
   const w = writer(speed), s = p.settings, version = o.version ?? 1, gated = o.gated ?? false;
   const board = storyboardFor(p, c), lines = board.length + (s.ending !== 'none' ? 1 : 0);
   const step = (id: string, text: string, detail?: string) => w.emit({ type: 'log.add', step: { id, text, status: 'run', ...(detail && { detail }) } });
@@ -76,8 +88,23 @@ export function buildWriteScript(p: ProjectState, c: DemoCatalog, speed = 1, o: 
   w.emit({ type: 'storyboard', title: p.title, scenes: board.map(({ catalog: _c, ...b }) => b) });
   if (version === 1) done(id, `Написал сценарий: ${board.length} ${scenesWord}, ${lines} реплик`);
   else done(id, `Сценарий v${version} готов`, 'Демо-режим: показываю тот же сценарий как новую версию — по-настоящему его перепишет Claude');
+  // the choices behind the script, shown beside the script gate (the ungated run is the plain pre-Inkframe-3 recording)
+  if (version === 1 && gated) {
+    const d = (what: 'style' | 'voice' | 'music', chosen: string, reason: string) =>
+      w.emit({ type: 'decision', decision: { at: new Date().toISOString(), stage: 'brief', what, chosen, alternatives: [], reason, confidence: 'high' } });
+    d('style', 'Акварель', 'задан на стартовом экране');
+    d('voice', VOICE_NAMES[s.voice], 'из настроек');
+    d('music', MUSIC_NAMES[s.music], 'из настроек');
+    for (const b of board) w.emit({ type: 'decision', decision: {
+      at: new Date().toISOString(), stage: 'script', what: 'template', scene: b.n, chosen: b.template ?? 'host', confidence: 'medium',
+      alternatives: ['host', 'object', 'compare', 'card'].filter(t => t !== b.template), reason: 'демо: кадры взяты из готового мультфильма «Как работает лидар»',
+    } });
+  }
   if (gated) {
-    const summary = `${board.length} ${scenesWord}, ${s.duration} с. Прочитайте реплики: после «Утвердить» Клод озвучит их и нарисует сцены. Если что-то не так — верните с замечанием, сценарий перепишется.`;
+    const summary = `${board.length} ${scenesWord}, ${s.duration} с. ` + (o.storyboardNext
+      ? 'Прочитайте реплики: после «Утвердить» Клод нарисует по одному ключевому кадру на сцену — раскадровку. Если что-то не так — верните с замечанием, сценарий перепишется.'
+      : 'Прочитайте реплики: после «Утвердить» Клод озвучит их и нарисует сцены. Если что-то не так — верните с замечанием, сценарий перепишется.');
+    if (o.estimate) w.emit({ type: 'estimate', estimate: o.estimate });
     w.emit({ type: 'stage', stage: 'script', status: 'awaiting', version });
     w.emit({ type: 'gate', stage: 'script', version, open: true, summary });
     w.emit({ type: 'log.add', step: { id: `gate-script-v${version}`, text: `Сценарий v${version} ждёт вашего решения`, status: 'wait', detail: 'Утвердите или верните с замечанием' } });
@@ -88,8 +115,33 @@ export function buildWriteScript(p: ProjectState, c: DemoCatalog, speed = 1, o: 
   return w.out;
 }
 
-/** Everything after the approved script: hero, voice, every scene sketch → colour, music. Ends `ready`. */
-export function buildProduceScript(p: ProjectState, c: DemoCatalog, speed = 1): TimedEvent[] {
+/** The storyboard gate: one key frame per scene (version 1), or the next version after a note — only the scenes
+ *  marked (or, for a general note, all of them) get a new frame. Ends with the gate open. */
+export function buildKeysScript(p: ProjectState, c: DemoCatalog, speed = 1, o: { version?: number; note?: string; marks?: SceneNote[]; estimate?: Estimate } = {}): TimedEvent[] {
+  const w = writer(speed), version = o.version ?? 1, board = storyboardFor(p, c);
+  const redo = version === 1 ? board.map(b => b.n) : o.marks?.length ? o.marks.map(m => m.n).filter(n => n <= board.length) : board.map(b => b.n);
+  const id = `keys-v${version}`;
+  w.emit({ type: 'status', status: 'drafting' });
+  if (version === 1) w.emit({ type: 'stage', stage: 'storyboard', status: 'in_progress', version });
+  w.emit({ type: 'log.add', step: { id, text: version === 1 ? 'Рисую раскадровку: по одному ключевому кадру на сцену' : 'Правлю раскадровку по замечанию', status: 'run', detail: version === 1 ? 'начерно, без голоса' : `«${o.note ?? ''}»` } });
+  for (const n of redo) w.emit({ type: 'scene.key', n, src: '' });
+  for (const b of board.filter(x => redo.includes(x.n))) {
+    w.wait(500);
+    w.emit({ type: 'scene.key', n: b.n, src: frameSrc(c, b.catalog, version === 1 ? 4 : (3 + version) % 8, 'color') });
+  }
+  w.emit({ type: 'log.update', id, status: 'ok', text: version === 1 ? `Нарисовал раскадровку: ${board.length} кадра` : `Раскадровка v${version}: перерисовал сцены ${redo.join(', ')}`,
+    detail: version === 1 ? '' : 'Демо-режим: показываю другой кадр той же сцены — по-настоящему сцену поправит Claude по замечанию' });
+  if (o.estimate) w.emit({ type: 'estimate', estimate: o.estimate });
+  w.emit({ type: 'stage', stage: 'storyboard', status: 'awaiting', version });
+  w.emit({ type: 'gate', stage: 'storyboard', version, open: true, summary: `Раскадровка: ${board.length} кадра — по одному на сцену, начерно и без голоса. После «Утвердить» Клод озвучит реплики, нарисует сцены целиком, соберёт MP4 и проверит его. Не так — напишите замечание или отметьте сцены «перерисовать».` });
+  w.emit({ type: 'log.add', step: { id: `gate-storyboard-v${version}`, text: `Раскадровка v${version} ждёт вашего решения`, status: 'wait', detail: 'Полностью рисовать не начинаю, пока не утвердите' } });
+  w.emit({ type: 'status', status: 'awaiting' });
+  return w.out;
+}
+
+/** Everything after the approved script (or storyboard): hero, voice, every scene sketch → colour, music. Ends
+ *  `ready`; with `cut` it ends without it, the assemble script comes right after. */
+export function buildProduceScript(p: ProjectState, c: DemoCatalog, speed = 1, o: { cut?: boolean } = {}): TimedEvent[] {
   const w = writer(speed), s = p.settings;
   const board = storyboardFor(p, c);
   const step = (id: string, text: string, detail?: string) => w.emit({ type: 'log.add', step: { id, text, status: 'run', ...(detail && { detail }) } });
@@ -135,8 +187,8 @@ export function buildProduceScript(p: ProjectState, c: DemoCatalog, speed = 1): 
     done('music', `Музыка · ${MUSIC_NAMES[s.music]}, приглушена под голос`);
   }
   w.emit({ type: 'progress', value: 1, etaSec: 0 });
-  w.emit({ type: 'log.add', step: { id: 'ready', text: 'Все сцены готовы — можно собирать MP4', status: 'ok' } });
-  w.emit({ type: 'status', status: 'ready' });
+  w.emit({ type: 'log.add', step: { id: 'ready', text: o.cut ? 'Все сцены готовы — собираю MP4' : 'Все сцены готовы — можно собирать MP4', status: 'ok' } });
+  if (!o.cut) w.emit({ type: 'status', status: 'ready' });
   return w.out;
 }
 
@@ -185,23 +237,35 @@ export function buildEditScript(p: ProjectState, n: number, request: string, c: 
   return w.out;
 }
 
-export function buildAssembleScript(_p: ProjectState, c: DemoCatalog, speed = 1): TimedEvent[] {
-  const w = writer(speed);
+/** The cut and its self-review. `final`: the final gate opens with the MP4 (version given) instead of `done`.
+ *  `n`: the number of the cut (log lines of a second cut get their own ids). */
+export function buildAssembleScript(_p: ProjectState, c: DemoCatalog, speed = 1, o: { final?: { version: number }; n?: number } = {}): TimedEvent[] {
+  const w = writer(speed), k = o.n ?? 1, build = k === 1 ? 'build' : `build-${k}`, review = k === 1 ? 'review' : `review-${k}`;
   w.emit({ type: 'status', status: 'building' });
   w.emit({ type: 'stage', stage: 'compose', status: 'in_progress', version: 1 });
-  w.emit({ type: 'log.add', step: { id: 'build', text: 'Склеиваю сцены, голос и музыку в MP4', status: 'run', detail: '0 %' } });
-  for (const pct of [18, 41, 67, 88, 100]) { w.wait(600); w.emit({ type: 'log.update', id: 'build', status: 'run', detail: `${pct} %` }); }
-  w.emit({ type: 'log.update', id: 'build', status: 'ok', text: 'MP4 склеен — проверяю, прежде чем отдать', detail: c.videoLabel });
+  w.emit({ type: 'log.add', step: { id: build, text: 'Склеиваю сцены, голос и музыку в MP4', status: 'run', detail: '0 %' } });
+  for (const pct of [18, 41, 67, 88, 100]) { w.wait(600); w.emit({ type: 'log.update', id: build, status: 'run', detail: `${pct} %` }); }
+  w.emit({ type: 'log.update', id: build, status: 'ok', text: 'MP4 склеен — проверяю, прежде чем отдать', detail: c.videoLabel });
   w.emit({ type: 'stage', stage: 'compose', status: 'completed', version: 1 });
   // the self-review, as the real engine does it after every cut; the demo MP4's report is known in advance
   w.emit({ type: 'stage', stage: 'review', status: 'in_progress', version: 1 });
-  w.emit({ type: 'log.add', step: { id: 'review', text: 'Проверяю готовый ролик', status: 'run', detail: 'длина, чёрные и пустые кадры, голос под репликами, громкость, субтитры' } });
+  w.emit({ type: 'log.add', step: { id: review, text: 'Проверяю готовый ролик', status: 'run', detail: 'длина, чёрные и пустые кадры, голос под репликами, громкость, субтитры' } });
   w.wait(900);
   w.emit({ type: 'review', review: { at: new Date().toISOString(), video: c.video, decision: 'PASS', checks: c.review } });
-  w.emit({ type: 'log.update', id: 'review', status: 'ok', text: 'Проверил ролик: всё в порядке', detail: '' });
+  w.emit({ type: 'log.update', id: review, status: 'ok', text: 'Проверил ролик: всё в порядке', detail: '' });
   w.emit({ type: 'stage', stage: 'review', status: 'completed', version: 1 });
   w.emit({ type: 'video', src: c.video });
-  w.emit({ type: 'log.update', id: 'build', status: 'ok', text: 'MP4 готов — можно скачать', detail: c.videoLabel });
+  if (o.final) {
+    const v = o.final.version;
+    w.emit({ type: 'log.update', id: build, status: 'ok', text: 'MP4 склеен и проверен — ждёт вашего решения', detail: c.videoLabel });
+    w.emit({ type: 'stage', stage: 'final', status: 'awaiting', version: v });
+    w.emit({ type: 'gate', stage: 'final', version: v, open: true, summary: 'MP4 собран и проверен: ошибок нет. Посмотрите ролик: «Утвердить» — ролик готов, его можно скачать. Не так — выберите сцену и напишите, что переделать: Клод перерисует её и соберёт MP4 заново.' });
+    w.emit({ type: 'log.add', step: { id: `gate-final-v${v}`, text: `Финал v${v} ждёт вашего решения`, status: 'wait', detail: 'Ролик отдам, когда утвердите' } });
+    w.emit({ type: 'status', status: 'awaiting' });
+    return w.out;
+  }
+  w.emit({ type: 'stage', stage: 'final', status: 'completed', version: 1 });
+  w.emit({ type: 'log.update', id: build, status: 'ok', text: 'MP4 готов — можно скачать', detail: c.videoLabel });
   w.emit({ type: 'status', status: 'done' });
   return w.out;
 }

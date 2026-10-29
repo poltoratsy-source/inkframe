@@ -5,6 +5,8 @@ import { DEFAULT_SETTINGS } from '../lib/options.ts';
 import type { EngineEvent } from '../lib/engine/types.ts';
 
 const settings = { ...DEFAULT_SETTINGS, idea: 'Почему небо голубое', duration: 15 };
+/** The gates of M1–M3: only the script stops; the storyboard and final gates are tested in gates-m4.test.ts. */
+const M1 = { script: true, storyboard: false, final: false };
 const until = (engine: DemoEngine, id: string, pred: (ev: EngineEvent) => boolean) =>
   new Promise<EngineEvent[]>(resolve => {
     const seen: EngineEvent[] = [];
@@ -18,7 +20,7 @@ const gateOpen = (engine: DemoEngine, id: string, version = 1) => until(engine, 
 const tick = (ms = 20) => new Promise(r => setTimeout(r, ms));
 
 test('subscribe replays a snapshot first, then the run ends ready', async () => {
-  const e = new DemoEngine({ speed: 1000 });
+  const e = new DemoEngine({ speed: 1000, gates: M1 });
   const p = create(e);
   const seen = await until(e, p.id, ev => ev.type === 'status' && ev.status === 'ready');
   assert.equal(seen[0].type, 'snapshot');
@@ -28,7 +30,7 @@ test('subscribe replays a snapshot first, then the run ends ready', async () => 
 });
 
 test('an edit sent mid-run waits for the run and then redraws the scene', async () => {
-  const e = new DemoEngine({ speed: 1000 });
+  const e = new DemoEngine({ speed: 1000, gates: M1 });
   const p = create(e);
   await until(e, p.id, ev => ev.type === 'stage' && ev.stage === 'paint' && ev.status === 'in_progress');
   e.editScene(p.id, 2, 'ночь');
@@ -39,7 +41,7 @@ test('an edit sent mid-run waits for the run and then redraws the scene', async 
 });
 
 test('build is refused until every scene is done, then hands out the video', async () => {
-  const e = new DemoEngine({ speed: 1000 });
+  const e = new DemoEngine({ speed: 1000, gates: M1 });
   const p = create(e);
   assert.throws(() => e.build(p.id), /not ready/);
   await until(e, p.id, ev => ev.type === 'status' && ev.status === 'ready');
@@ -49,7 +51,7 @@ test('build is refused until every scene is done, then hands out the video', asy
 });
 
 test('unknown projects and scenes', async () => {
-  const e = new DemoEngine({ speed: 1000 });
+  const e = new DemoEngine({ speed: 1000, gates: M1 });
   assert.equal(e.get('nope'), undefined);
   assert.throws(() => e.editScene('nope', 1, 'x'), /not found/);
   const p = create(e);
@@ -63,7 +65,7 @@ test('empty idea is refused', () => {
 });
 
 test('new words from the edit panel show at once and redraw the scene', async () => {
-  const e = new DemoEngine({ speed: 1000 });
+  const e = new DemoEngine({ speed: 1000, gates: M1 });
   const p = create(e);
   await until(e, p.id, ev => ev.type === 'status' && ev.status === 'ready');
   e.editScene(p.id, 1, '', { line: 'Новая реплика' });
@@ -73,7 +75,7 @@ test('new words from the edit panel show at once and redraw the scene', async ()
 });
 
 test('the demo stops at the script gate and goes on after «Утвердить»', async () => {
-  const e = new DemoEngine({ speed: 1000 });
+  const e = new DemoEngine({ speed: 1000, gates: M1 });
   const p = e.create(settings);
   const seen = await gateOpen(e, p.id);
   await tick();
@@ -97,7 +99,7 @@ test('the demo stops at the script gate and goes on after «Утвердить»
 });
 
 test('«Вернуть с замечанием» in the demo: «переделываю», then version 2 at the gate', async () => {
-  const e = new DemoEngine({ speed: 1000 });
+  const e = new DemoEngine({ speed: 1000, gates: M1 });
   const p = e.create(settings);
   await gateOpen(e, p.id);
   await tick();

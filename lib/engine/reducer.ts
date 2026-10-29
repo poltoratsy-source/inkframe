@@ -1,6 +1,7 @@
 // Folds engine events into project state. Pure, so the server and the browser fold the same way.
 import type { EngineEvent, ProjectState, StartSettings } from './types';
 import { STAGE_IDS, defaultStages, type StageMap } from '../store/types';
+import { describeDecision } from '../store/decisions';
 
 export const NO_LOOK = { filter: 'none', zoom: 1 };
 
@@ -62,6 +63,9 @@ export function applyEvent(s: ProjectState, ev: EngineEvent): ProjectState {
     case 'track': return { ...s, tracks: { ...s.tracks, [ev.kind]: ev.peaks } };
     case 'video': return ev.src ? { ...s, video: ev.src } : { ...s, video: undefined, review: undefined };
     case 'review': return { ...s, review: ev.review };
+    case 'scene.key': return scene(ev.n, sc => (ev.src ? { ...sc, key: ev.src, frame: ev.src, frameKind: 'color' } : { ...sc, key: undefined }));
+    case 'estimate': return { ...s, estimate: ev.estimate };
+    case 'decision': return { ...s, log: [...s.log, { id: `decision-${s.log.length}`, text: describeDecision(ev.decision), detail: ev.decision.reason, status: 'ok', decision: ev.decision }] };
     case 'status': return { ...s, status: ev.status };
     case 'stage': return { ...s, stages: { ...(s.stages ?? defaultStages()), [ev.stage]: { status: ev.status, version: ev.version } } };
     case 'gate':

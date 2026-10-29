@@ -1,11 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { tmp as tmpDir } from './helpers/tmp.ts';
 import { hasApiKey, saveApiKey } from '../lib/settings.ts';
 
-const tmp = () => join(mkdtempSync(join(tmpdir(), 'inkframe-')), '.env.local');
+const tmp = () => join(tmpDir(), '.env.local');
 const KEY = 'sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123456789';
 
 test('saves a key into a new file', () => {

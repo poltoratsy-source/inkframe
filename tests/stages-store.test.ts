@@ -1,13 +1,13 @@
 // The stage store on files: versions, history that is never overwritten, the gate rules and the journal.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { tmp } from './helpers/tmp.ts';
 import { StageStore, readGatePolicy } from '../lib/store/stages.ts';
 import { DEFAULT_GATES, gatesFrom } from '../lib/store/types.ts';
 
-const store = () => new StageStore(mkdtempSync(join(tmpdir(), 'inkframe-stages-')));
+const store = () => new StageStore(tmp('inkframe-stages-'));
 const status = (err: unknown) => (err as { status?: number }).status;
 const SCRIPT_V1 = { scenes: [{ title: 'Вопрос', line: 'Почему небо голубое?' }] };
 const SCRIPT_V2 = { scenes: [{ title: 'Вопрос', line: 'Коротко: почему небо голубое?' }] };
@@ -80,7 +80,7 @@ test('gate policy: defaults on, INKFRAME_GATES=off, a list, inkframe.config.json
   assert.deepEqual(gatesFrom(undefined), DEFAULT_GATES);
   assert.deepEqual(gatesFrom('off'), { script: false, storyboard: false, final: false });
   assert.deepEqual(gatesFrom('script'), { script: true, storyboard: false, final: false });
-  const cwd = mkdtempSync(join(tmpdir(), 'inkframe-cfg-'));
+  const cwd = tmp('inkframe-cfg-');
   assert.deepEqual(readGatePolicy(cwd, {}), DEFAULT_GATES);
   writeFileSync(join(cwd, 'inkframe.config.json'), JSON.stringify({ gates: { script: false } }));
   assert.equal(readGatePolicy(cwd, {}).script, false);

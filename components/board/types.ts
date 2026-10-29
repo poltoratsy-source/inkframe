@@ -13,7 +13,16 @@ export const STAGE_TITLES: Record<StageId, string> = {
 export type CardStatus = 'queued' | 'sketch' | 'painting' | 'done' | 'awaiting' | 'redraw';
 export interface SceneCardView { n: number; title: string; line: string; start: number; duration: number; template: string; frame?: string; status: CardStatus; edits: number; note?: string }
 
-export interface EstimateView { frames: number; workers: number; paintSec: number; voiceSec: number; cutSec: number; claudeCalls: number; diskMb: number; mode: 'observe' | 'warn' | 'cap'; capSec?: number; actualSec?: number }
+export interface EstimateView {
+  frames: number; workers: number; paintSec: number; voiceSec: number; cutSec: number; claudeCalls: number; diskMb: number;
+  mode: 'observe' | 'warn' | 'cap'; capSec?: number; actualSec?: number;
+  /** the engine's Estimate carries these too: s/frame measured on this server or the fallback, and the fact by part */
+  measured?: boolean; keyFrames?: number; draftFrames?: number; finalFrames?: number;
+  actual?: { paintSec: number; voiceSec: number; cutSec: number };
+}
+/** Over the cap and not yet done: «Утвердить» needs the permission box. */
+export const needsPermission = (e: EstimateView | undefined) =>
+  !!e && e.mode === 'cap' && e.capSec !== undefined && e.actualSec === undefined && e.paintSec + e.voiceSec + e.cutSec > e.capSec;
 
 export type CheckId = 'probe' | 'duration' | 'black' | 'blank' | 'silence' | 'clipping' | 'subtitles' | 'slideshow';
 export interface ReviewView { decision: 'PASS' | 'WARN' | 'FAIL'; checks: { id: CheckId; ok: boolean; warn?: boolean; detail: string; at?: number[] }[] }

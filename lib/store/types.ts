@@ -6,17 +6,20 @@ export type StageStatus = 'pending' | 'in_progress' | 'awaiting' | 'completed' |
 
 export const STAGE_IDS: StageId[] = ['brief', 'script', 'storyboard', 'paint', 'voice', 'compose', 'review', 'final'];
 export const STAGE_STATUSES: StageStatus[] = ['pending', 'in_progress', 'awaiting', 'completed', 'revised', 'failed'];
-/** Stages the engines run today; storyboard and final join with their milestones (architecture.md, build order). */
-export const LIVE_STAGES: StageId[] = ['brief', 'script', 'paint', 'voice', 'compose', 'review'];
+/** Stages the engines run (M4: every one of them; the rail shows them all). */
+export const LIVE_STAGES: StageId[] = [...STAGE_IDS];
 
 export const STAGE_NAMES: Record<StageId, string> = {
   brief: 'Бриф', script: 'Сценарий', storyboard: 'Раскадровка', paint: 'Отрисовка',
   voice: 'Голос', compose: 'Сборка', review: 'Проверка', final: 'Финал',
 };
 
+/** «утверждён» / «утверждена» — the stage names are of both genders */
+export const approvedWord = (id: StageId) => (['storyboard', 'paint', 'compose', 'review'].includes(id) ? 'утверждена' : 'утверждён');
+
 export const isStageId = (v: unknown): v is StageId => typeof v === 'string' && (STAGE_IDS as string[]).includes(v);
 
-/** Which stages stop for a human. Only `script` has a gate in this build; the others are read but not used yet. */
+/** Which stages stop for a human: the script, the storyboard (contact sheet of key frames) and the final MP4. */
 export interface GatePolicy { script: boolean; storyboard: boolean; final: boolean }
 export const DEFAULT_GATES: GatePolicy = { script: true, storyboard: true, final: true };
 
@@ -30,7 +33,15 @@ export function gatesFrom(value: string | undefined, base: GatePolicy = DEFAULT_
   return { script: on.has('script'), storyboard: on.has('storyboard'), final: on.has('final') };
 }
 
-export interface Approval { decision: 'approve' | 'revise'; version: number; note?: string; at: string }
+/** One scene marked «перерисовать» on the storyboard gate, with what to change in it. */
+export interface SceneNote { n: number; note: string }
+export interface Approval {
+  decision: 'approve' | 'revise'; version: number; note?: string; at: string;
+  /** revise: scenes marked one by one (storyboard: redraw these; final: redo this scene) */
+  scenes?: SceneNote[];
+  /** approve: the estimate was over the cap and the human allowed it */
+  overCap?: boolean;
+}
 
 /** projects/<id>/stages/<stage>.json — the newest version; older ones in stages/history/<stage>.v<N>.json */
 export interface Checkpoint {
@@ -46,6 +57,59 @@ export interface Checkpoint {
   /** resume point for paint / voice */
   doneScenes?: number[];
   approval?: Approval;
+  /** what the work after this gate will cost (lib/real/estimate.ts); in `cap` mode approve needs allowOverCap */
+  estimate?: Estimate;
+}
+
+// ---------- budget ----------
+/** observe = only show; warn = show a warning above capSec; cap = approve needs an explicit permission above capSec */
+export type BudgetMode = 'observe' | 'warn' | 'cap';
+export interface BudgetPolicy { mode: BudgetMode; capSec?: number }
+export const DEFAULT_BUDGET: BudgetPolicy = { mode: 'observe' };
+/** warn / cap without a number: 15 minutes of work */
+export const DEFAULT_CAP_SEC = 900;
+
+/** projects/<id>/estimate.json and on each gate: the time and resources of the rest of the run.
+ *  paintSec = (draft + key frames × draft s/frame + final frames × final s/frame) / workers. */
+export interface Estimate {
+  /** the gate this estimate was shown on */
+  stage: StageId;
+  at: string;
+  frames: number;
+  /** key frames for the contact sheet, draft frames (sketch + colour), final frames of the MP4 */
+  keyFrames: number; draftFrames: number; finalFrames: number;
+  /** seconds of one worker per final frame, and per draft frame */
+  secPerFrame: number; draftSecPerFrame: number;
+  /** true = s/frame from this server's last frames; false = the built-in fallback */
+  measured: boolean;
+  workers: number;
+  paintSec: number; voiceSec: number; cutSec: number; totalSec: number;
+  /** Claude requests: made for this cartoon so far + the ones the rest of the run needs */
+  claudeCalls: number;
+  diskMb: number;
+  mode: BudgetMode; capSec?: number;
+  /** wall time the work really took, filled in when it is over */
+  actualSec?: number;
+  actual?: { paintSec: number; voiceSec: number; cutSec: number };
+}
+
+/** Over the cap: approving needs `allowOverCap` (checked in the store, not only in the button). */
+export const overCap = (e: Estimate | undefined): boolean =>
+  !!e && e.mode === 'cap' && e.capSec !== undefined && e.actualSec === undefined && e.totalSec > e.capSec;
+
+// ---------- decisions ----------
+/** projects/<id>/decisions.jsonl — what the engine chose, out of what, and why (shown in WorkLog as «решение: …») */
+export interface Decision {
+  at: string;
+  stage: StageId;
+  what: 'template' | 'style' | 'voice' | 'music' | 'fallback' | 'format' | 'estimate' | 'other';
+  /** the scene it is about, for per-scene choices */
+  scene?: number;
+  chosen: string;
+  alternatives: string[];
+  reason: string;
+  confidence: 'high' | 'medium' | 'low';
+  estimate?: Estimate;
 }
 
 /** projects/<id>/events.jsonl — one JSON per line, append-only */
@@ -53,7 +117,7 @@ export interface LoggedEvent {
   at: string;
   stage?: StageId;
   scene?: number;
-  kind: 'stage' | 'gate' | 'scene' | 'frame' | 'voice' | 'cut' | 'review' | 'decision' | 'error' | 'log';
+  kind: 'stage' | 'gate' | 'scene' | 'frame' | 'voice' | 'cut' | 'review' | 'decision' | 'estimate' | 'error' | 'log';
   payload: Record<string, unknown>;
 }
 

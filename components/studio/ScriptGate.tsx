@@ -1,8 +1,7 @@
 'use client';
-import { useState } from 'react';
-import { GatePanel, type GateState } from '../board/GatePanel';
+import { GatePanel } from '../board/GatePanel';
 import { mmss } from '../board/types';
-import { api } from '@/lib/api';
+import { useGate } from './useGate';
 import type { ProjectState, Scene } from '@/lib/engine/types';
 
 const sec = (s: number) => s.toFixed(1).replace('.', ',').replace(/,0$/, '');
@@ -49,33 +48,14 @@ function ScriptTable({ scenes, dim }: { scenes: Scene[]; dim?: boolean }) {
 /** The script gate in the studio: the scene list, «Утвердить» and «Вернуть с замечанием». While a sent-back script
  *  is being rewritten the panel stays, showing the note, until the next version opens the gate again. */
 export function ScriptGate({ project: p }: { project: ProjectState }) {
-  const gate = p.gate?.stage === 'script' ? p.gate : undefined;
-  const st = p.stages.script;
-  const version = gate?.version ?? st.version;
-  const revising = !gate && st.status === 'revised';
-  const [ui, setUi] = useState<{ state: 'sending' | 'error'; version: number; error?: string } | null>(null);
-  const [sentNote, setSentNote] = useState<string>();
-
-  const send = async (decision: 'approve' | 'revise', v: number, note?: string) => {
-    setUi({ state: 'sending', version: v });
-    try {
-      await api.gate(p.id, 'script', v, decision, note);
-      if (decision === 'revise') setSentNote(note);
-      setUi(null);
-    } catch (e) {
-      setUi({ state: 'error', version: v, error: (e as Error).message || 'Не дошло до студии — попробуйте ещё раз.' });
-    }
-  };
-
-  const mine = ui && ui.version === version ? ui : null;
-  const state: GateState = revising ? 'revised' : mine?.state ?? 'awaiting';
+  const { gate, version, revising, state, error, sentNote, send } = useGate(p, 'script');
   const summary = revising
     ? 'Клод переписывает сценарий по вашему замечанию. Новая версия появится здесь сама, и её снова нужно будет утвердить.'
     : gate?.summary ?? '';
   return (
     <GatePanel key={`script-v${version}`} stage="script" version={version} summary={summary} state={state}
-      error={mine?.state === 'error' ? mine.error : undefined} note={sentNote}
-      onApprove={v => send('approve', v)} onRevise={(v, note) => send('revise', v, note)}>
+      estimate={gate && p.estimate?.stage === 'script' ? p.estimate : undefined} error={error} note={sentNote}
+      onApprove={(v, allowOverCap) => send('approve', v, undefined, { allowOverCap })} onRevise={(v, note) => send('revise', v, note)}>
       <ScriptTable scenes={p.scenes} dim={revising} />
     </GatePanel>
   );

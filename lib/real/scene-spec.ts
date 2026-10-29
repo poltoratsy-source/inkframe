@@ -39,8 +39,11 @@ export interface SceneSpec {
   pace?: 'slow' | 'normal' | 'fast';
 }
 
+/** How the line boils (renderer/engine/core.js): set by the engine or a style pack, never by the storyboard. */
+export interface BoilParams { fps?: number; amp?: number; inkOnly?: boolean; holdStill?: boolean }
+
 /** What the stage page gets for one frame (renderer/templates.js reads window.SCENE). */
-export interface StageScene extends SceneSpec { duration: number; voice: string; sketch?: boolean; fast?: boolean }
+export interface StageScene extends SceneSpec { duration: number; voice: string; sketch?: boolean; fast?: boolean; boil?: BoilParams }
 
 const pick = <T extends string>(list: readonly T[], v: unknown, d?: T): T | undefined =>
   (typeof v === 'string' && (list as readonly string[]).includes(v.trim().toLowerCase()) ? v.trim().toLowerCase() as T : d);

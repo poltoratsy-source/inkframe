@@ -99,7 +99,8 @@ const SETTINGS = {
     boilSeed('board'); paint(rrPts(260, 110, 1400, 560, 16), { wash: '#3E5E4C', fill: '#2F4A3B', fillOp: 70, ink: '#5A3E2B', sw: 1.6 });
   },
 };
-function setting(name, lt) { (SETTINGS[name] || SETTINGS.sky)(lt); }
+// with boil.holdStill the background holds its drawing (the clouds drift, but don't boil)
+function setting(name, lt) { withBoil(BOILP.holdStill ? { hold: true } : null, () => (SETTINGS[name] || SETTINGS.sky)(lt)); }
 const DARK = new Set(['night', 'space', 'board']);
 
 // ---------- words ----------
@@ -114,11 +115,21 @@ function label(txt, x, y, k, s, size = 84) {
   size = fitSize(txt, size, 620);
   letter(txt, x, y, size, s.sketch ? '#8B8590' : '#FFF5E2', { font: `700 ${size}px Caveat`, stroke: PAL.ink, pop: k * 1.4, screen: true });
 }
+// k = 0..1 through the arrow's draw-on: the shaft settles onto the target, then the head pops open
 function arrow(a, b, k, key) {
   if (k <= .02) return;
-  const e = [lerp(a[0], b[0], k), lerp(a[1], b[1], k)], d = Math.atan2(e[1] - a[1], e[0] - a[0]);
+  const kk = springK(k, 'settle'), e = [lerp(a[0], b[0], kk), lerp(a[1], b[1], kk)], d = Math.atan2(b[1] - a[1], b[0] - a[0]);
   boilSeed('arrow' + key); inkLine([a, [lerp(a[0], e[0], .5), lerp(a[1], e[1], .5) - 24], e], 2.2, PAL.ink, 'ink', .5);
-  if (k > .9) { inkLine([e, [e[0] - Math.cos(d - .5) * 40, e[1] - Math.sin(d - .5) * 40]], 2.2); inkLine([e, [e[0] - Math.cos(d + .5) * 40, e[1] - Math.sin(d + .5) * 40]], 2.2); }
+  const hl = 40 * springK(seg(k, .55, 1), 'overshoot');
+  // one stroke wing–tip–wing (a two-point brush spline paints nothing, so the old two-stroke head never showed)
+  if (hl > 2) inkLine([[e[0] - Math.cos(d - .5) * hl, e[1] - Math.sin(d - .5) * hl], e, [e[0] - Math.cos(d + .5) * hl, e[1] - Math.sin(d + .5) * hl]], 2.2, PAL.ink, 'ink', 0);
+}
+
+// A pop-in on the overshoot spring with squash and stretch that follows its speed: stretched while it shoots up,
+// squashed as it springs back. Returns { k (scale, ~1.16 at the peak), sq (for drawProp), boil (hold once settled) }.
+function popIn(lt, t0, dur, preset = 'overshoot') {
+  const k = springTo(lt, t0, dur, preset), sq = clamp(-springVel(lt, t0, dur, preset) * dur * .022, -.14, .14);
+  return { k, sq, boil: BOILP.holdStill && lt > t0 + dur ? { hold: true } : null };
 }
 
 // ---------- the host ----------
@@ -127,8 +138,16 @@ function host(lt, s, x, u, extra = {}) {
   const p = paceOf(s), v = voiceAt(lt), mood = s.mood || 'happy';
   const m = emotions(lt * p, [[0, mood], [Math.max(1, s.duration * .6) * p, s.mood2 || mood, { lookX: extra.lookX ?? 0 }]], { take: .6 });
   const talk = v >= 6 ? 'O' : v >= 3 ? 'o' : m.mouth;
-  const arm = extra.point ? { aR: .9 + .06 * Math.sin(lt * 6) } : v > 2 ? { aR: m.aR != null ? m.aR : .25 + .35 * Math.sin(lt * 5) } : {};
-  clawd(x, GROUND + (extra.gy || 0), u, { ...m, ...arm, ...extra.pose, mouth: talk, boilKey: 'host' });
+  // the right arm: talking, waving hello until extra.wave, pointing during extra.point = [from, to]; it springs
+  // between these instead of snapping
+  let aR = v > 2 ? (m.aR != null ? m.aR : .25 + .35 * Math.sin(lt * 5)) : m.aR;
+  if (extra.wave) aR = lerp(aR ?? .2, 1.2 + .45 * Math.sin(lt * 12), 1 - springTo(lt, extra.wave, .45, 'settle'));
+  if (extra.point) aR = lerp(aR ?? .2, .9 + .06 * Math.sin(lt * 6), springTo(lt, extra.point[0], .45, 'overshoot') * (1 - springTo(lt, extra.point[1], .5, 'settle')));
+  // hops add to the mood's own body motion: extra.hops = [[t0, t1, h], ...]
+  let dy = m.dy || 0, sq = m.sq || 0;
+  for (const [h0, h1, hh, ho] of extra.hops || []) { const j = hop(lt, h0, h1, hh, ho); dy += j.dy; sq += j.sq; }
+  if (extra.hops) sq = clamp(sq, -.2, .24);   // a hop on top of a bouncy mood must not turn him to rubber
+  clawd(x, GROUND + (extra.gy || 0), u, { ...m, ...extra.pose, aR: (extra.pose && extra.pose.aR) ?? aR, dy, sq, mouth: talk, boilKey: 'host' });
 }
 const hostU = (s, base) => (s.heroSize === 'big' ? base * 1.35 : base);
 
@@ -138,18 +157,21 @@ const TEMPLATES = {
     const lt = t, d = s.duration, hasProp = !!PROPS[s.prop];
     camBegin(960 + 18 * Math.sin(lt * .35), 560, kf(lt, [[0, 1.07], [d, 1.0]]));
     setting(s.setting, lt);
-    if (hasProp) drawProp(s.prop, s.hero === false ? 960 : 1330, 470, (s.hero === false ? 1.7 : 1.25) * backOut(seg(lt, .5, 1.2)), lt, s.propColor);
-    host(lt, s, hasProp ? 640 : 960, hostU(s, 26), { lookX: hasProp ? .8 : 0, point: hasProp && lt > 1.2 && lt < d * .7,
-      pose: lt < 1.6 && !hasProp ? { aR: 1.2 + .45 * Math.sin(lt * 12) } : {} });
+    const pp = popIn(lt, .5, .75);
+    if (hasProp) drawProp(s.prop, s.hero === false ? 960 : 1330, 470, (s.hero === false ? 1.7 : 1.25) * pp.k, lt, s.propColor, pp);
+    // Clawd hops into the shot (a crouch, the hop, a small rebound), then waves or points at the prop
+    host(lt, s, hasProp ? 640 : 960, hostU(s, 26), { lookX: hasProp ? .8 : 0, point: hasProp ? [1.2, d * .7] : null,
+      wave: hasProp ? null : 1.5, hops: [[.36, .7, 1.4]] });
     camEnd();
     caption(s, lt);
   },
   object(t, s) {
-    const lt = t, d = s.duration, k = backOut(seg(lt, .2, .9));
+    const lt = t, d = s.duration, pp = popIn(lt, .2, .8);
     camBegin(960 + 10 * Math.sin(lt * .4), 540, kf(lt, [[0, 1.0], [d, 1.05]]));
     setting(s.setting, lt);
-    drawProp(PROPS[s.prop] ? s.prop : 'question', 1000, 500, 1.75 * k * (1 + .025 * Math.sin(lt * 2)), lt, s.propColor);
-    host(lt, s, 270, hostU(s, 13), { lookX: .9, point: lt > 1 });
+    drawProp(PROPS[s.prop] ? s.prop : 'question', 1000, 500, 1.75 * pp.k * (1 + .025 * Math.sin(lt * 2)), lt, s.propColor, pp);
+    // "look at this!": a little hop as he starts pointing
+    host(lt, s, 270, hostU(s, 13), { lookX: .9, point: [1, d + 1], hops: [[.95, 1.25, 1.1]] });
     camEnd();
     const labels = (s.labels || []).slice(0, 2), spots = [[400, 300, [770, 450]], [1580, 300, [1240, 430]]];
     labels.forEach((txt, i) => {
@@ -163,28 +185,31 @@ const TEMPLATES = {
     const lt = t, d = s.duration, L = s.left || {}, R = s.right || {};
     camBegin(960, 540 + 6 * Math.sin(lt * .5), kf(lt, [[0, 1.04], [d, 1.0]]));
     setting(s.setting, lt);
-    const kL = backOut(seg(lt, .3, .9)), kR = backOut(seg(lt, d * .4, d * .4 + .6));
-    for (const [side, P, k, x] of [['L', L, kL, 520], ['R', R, kR, 1400]]) {
-      drawProp(PROPS[P.prop] ? P.prop : 'question', x, 470, 1.3 * k, lt, P.color);
+    const pL = popIn(lt, .3, .7), pR = popIn(lt, d * .4, .7);
+    for (const [P, pp, x] of [[L, pL, 520], [R, pR, 1400]]) {
+      drawProp(PROPS[P.prop] ? P.prop : 'question', x, 470, 1.3 * pp.k, lt, P.color, pp);
     }
+    // he turns from one side to the other in a small hop, flipping at the top of it
     const look = kf(lt, [[0, -.9], [d * .38, -.9], [d * .46, .9], [d * .8, .9], [d * .9, 0]]);
-    host(lt, s, 960, hostU(s, 15), { lookX: look, pose: { flip: look < 0 } });
+    host(lt, s, 960, hostU(s, 15), { lookX: look, pose: { flip: look < 0 }, hops: [[d * .42 - .15, d * .42 + .15, 1]] });
     camEnd();
     label(L.caption, 520, 680, seg(lt, .6, 1.1), s, 88);
     label(R.caption, 1400, 680, seg(lt, d * .4 + .3, d * .4 + .8), s, 88);
     caption(s, lt);
   },
   card(t, s) {
-    const lt = t, d = s.duration, k = backOut(seg(lt, .1, .7));
+    const lt = t, d = s.duration, pc = popIn(lt, .1, .8), k = pc.k;
     setting(s.setting || 'sunset', lt);
     for (let i = 0; i < 12; i++) {
       const x = hash(i * 7.7) * W, y = ((hash(i * 3.3) * H + lt * (120 + 80 * hash(i))) % (H + 200)) - 100;
       boilSeed('conf' + i); paint(starPts(x, y, 16 + 10 * hash(i), .45, 5, lt * 2 + i), { wash: ['#F7C948', '#E27A92', '#8EC3E6', '#6E9F58'][i % 4], ink: null });
     }
-    push(); translate(960, 380); scale(k); translate(-960, -380);
+    push(); translate(960, 380); scale(k * (1 + pc.sq * .6), k * (1 - pc.sq)); translate(-960, -380);
     boilSeed('card'); paint(rrPts(330, 150, 1260, 470, 28, 2), { wash: '#FFF5E2', fill: PAL.clayLt, fillOp: 40, ink: PAL.clayDk, sw: 1.6 });
     pop();
-    host(lt, s, 960, hostU(s, 18), { pose: { ...jump(lt % 1.6, .5, .9, 1.2), aR: 1.3 + .3 * Math.sin(lt * 10), aL: 1.3 + .3 * Math.sin(lt * 10 + 1) } });
+    // cheering: hops on a 1.6 s loop, each with a crouch before and a bounce after
+    const hl = lt % 1.6, hops = [[.5, .9, 1.4]].map(([a, b, h]) => [a + lt - hl, b + lt - hl, h]);
+    host(lt, s, 960, hostU(s, 18), { hops, pose: { aR: 1.3 + .3 * Math.sin(lt * 10), aL: 1.3 + .3 * Math.sin(lt * 10 + 1) } });
     const title = (s.title || s.caption || '').trim(), sub = (s.subtitle || '').trim();
     if (title && k > .3) { const size = fitSize(title, 190, 1100); letter(title, 960, sub ? 340 : 385, size, s.sketch ? '#8B8590' : PAL.clay, { font: `700 ${size}px Caveat`, stroke: PAL.ink, pop: (lt - .4) * 2.2, rot: -.03, screen: true }); }
     if (sub && k > .3) { const size = fitSize(sub, 72, 1100); letter(sub, 960, 500, size, s.sketch ? '#8B8590' : PAL.ink, { font: `700 ${size}px Caveat`, pop: (lt - .9) * 2.4, ink: false, screen: true }); }

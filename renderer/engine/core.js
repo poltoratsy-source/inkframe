@@ -19,14 +19,43 @@ const easeOut = x => 1 - Math.pow(1 - clamp(x), 3);
 const backOut = x => { x = clamp(x); const s = 1.9; return 1 + (s + 1) * Math.pow(x - 1, 3) + s * Math.pow(x - 1, 2); };
 const hash = i => { const x = Math.sin(i * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); };
 const bpOf = t => (t - OFF) / BEAT;
-// Seeded by the boil frame, so linework "boils" at BOIL fps like hand-drawn animation.
-const jit = a => (random() * 2 - 1) * a;
+// ---------- boil: the line re-drawing itself, like hand-drawn animation ----------
+// How it boils is a set of parameters: PROJECT.boil for the whole film (a style pack fills it), SCENE.boil per scene
+// (from the engine), and per element through boilSeed(key, o) or withBoil(o, fn). The defaults are the classic look.
+//   fps        boil drawings a second (12 = "on twos")
+//   amp        scales the hand jitter of shapes (jit); 0 keeps outlines in place (the brush texture still re-draws)
+//   inkOnly    only ink lines boil (outlines, inkLine); washes, watercolour fills and hatching hold still
+//   hold       this element doesn't boil at all (its drawing is held), e.g. a prop at rest
+//   holdStill  scene-wide: backgrounds and props that have finished arriving hold (the templates pass `hold` for them)
+const BOIL_DEFAULT = { fps: BOIL, amp: 1, inkOnly: false, hold: false, holdStill: false };
+let BOILP = BOIL_DEFAULT, BOILO = null, BOILE = BOIL_DEFAULT, BOILK = '', BOILI = 0;
+const boilParams = () => ({ ...BOIL_DEFAULT, ...(PROJECT.boil || {}), ...((window.SCENE && window.SCENE.boil) || {}) });
+// Seeded by the boil frame, so linework "boils" at the boil fps. amp scales it (the stream is used the same either way).
+const jit = a => (random() * 2 - 1) * a * BOILE.amp;
 // Each boil drawing holds for several frames, so whatever isn't moving must draw the same until the next one. But a moving
 // thing uses a different amount of randomness each frame, which shifts the stream for everything drawn after it and makes
 // that re-boil every frame (jitter). boilSeed(key) restarts the stream from the boil frame and a key (any string or
 // number) that's the same every frame: call it before each separate element. clawd() does this for itself and its parts.
+// boilSeed(key, { fps, amp, inkOnly, hold }) overrides the boil for this element only.
 let BOILN = 0, CLAWD_N = 0;
-const boilSeed = key => { let h = 2166136261; for (const c of key + '|' + BOILN) h = Math.imul(h ^ c.charCodeAt(0), 16777619); randomSeed(h >>> 0); };
+const seedStr = s => { let h = 2166136261; for (const c of s) h = Math.imul(h ^ c.charCodeAt(0), 16777619); randomSeed(h >>> 0); };
+const boilFrame = e => e.hold ? 'hold' : e.fps === BOILP.fps ? BOILN : Math.floor(T * e.fps);
+function boilSeed(key, o) {
+  const e = BOILE = (o || BOILO) ? { ...BOILP, ...BOILO, ...o } : BOILP;
+  BOILK = key; BOILI = 0;
+  seedStr(key + '|' + (e.inkOnly ? 'hold' : boilFrame(e)));   // inkOnly: shapes and fills come from a held stream
+}
+// Everything drawn inside fn gets these boil options (unless its own boilSeed passes others): withBoil({ hold: true }, () => …)
+function withBoil(o, fn) { const prev = BOILO; BOILO = o ? { ...prev, ...o } : prev; try { return fn(); } finally { BOILO = prev; } }
+// inkOnly: an ink stroke takes its own boiling stream (and a little vertex jitter), then the held stream carries on,
+// so the fills drawn after it in the same element still hold. Pure: keyed by element, boil frame and stroke number.
+function inkBoil(pts, draw) {
+  if (!BOILE.inkOnly) return draw(pts);
+  const i = BOILI++, a = 1.6 * BOILE.amp;
+  seedStr(`${BOILK}|ink${i}|${boilFrame(BOILE)}`);
+  draw(BOILE.hold ? pts : pts.map(([x, y]) => [x + (random() * 2 - 1) * a, y + (random() * 2 - 1) * a]));
+  seedStr(`${BOILK}|hold|after${i}`);
+}
 
 // ---------- timing helpers (everything is a pure function of t; no state survives between frames) ----------
 const seg = (t, a, b) => clamp((t - a) / (b - a));                 // 0..1 progress of t through [a, b]
@@ -61,6 +90,65 @@ const shakeXY = (t, amt) => { const f = Math.floor(t * 24); return [(hash(f * 1.
 // after landing, a hat that jiggles, a stack that sways, a tail that drags. k = damping, w = wobble speed (rad/s).
 const spring = (t, t0, k = 6, w = 18) => t < t0 ? 0 : Math.exp(-k * (t - t0)) * Math.sin(w * (t - t0));
 const ring = (t, evs, k = 6, w = 18) => evs.reduce((s, e) => s + spring(t, e, k, w), 0);    // one kick per event time
+// ---------- spring presets (closed form: a pure function of progress, nothing is integrated frame to frame) ----------
+// springK(k, preset) for k = 0..1 through the move: 0 at k <= 0, exactly 1 from k >= 1, and starts at rest.
+//   settle     arrives with a hint of overshoot (~3 %) and rests: arrivals, slides, arms reaching a pose
+//   overshoot  one clear overshoot (~16 %), a small dip back, rest: pops, labels, things appearing
+//   bouncy     falls onto the end value and bounces off it, never past it (one clear hop, one small): landings, drops
+//   soft       critically damped, no overshoot, gentle: big slow things, camera, fades
+// A preset is a name or an object: { z: damping ratio, w: stiffness per move } or { bounce: restitution 0..1 }.
+const SPRINGS = { settle: { z: .72, w: 8.5 }, overshoot: { z: .5, w: 12 }, soft: { z: 1, w: 7 }, bouncy: { bounce: .45 } };
+function springK(k, preset = 'settle') {
+  if (k <= 0) return 0;
+  if (k >= 1) return 1;
+  const p = typeof preset === 'string' ? SPRINGS[preset] || SPRINGS.settle : preset;
+  if (p.bounce != null) {   // a dropped ball: a fall, then hops of restitution r whose lengths add up to exactly 1
+    const r = clamp(p.bounce, 0, .9), f = (1 - r) / (1 + r);
+    if (k < f) return (k / f) * (k / f);
+    let s = f, d = 2 * f * r, h = r * r;
+    while (s + d < k && d > 1e-4) { s += d; d *= r; h *= r * r; }
+    const u = clamp((k - s) / d); return 1 - h * 4 * u * (1 - u);
+  }
+  const z = p.z, w = p.w;
+  let rest;   // how far from the end value the damped spring still is
+  if (z < 1) { const wd = w * Math.sqrt(1 - z * z); rest = Math.exp(-z * w * k) * (Math.cos(wd * k) + z * w / wd * Math.sin(wd * k)); }
+  else rest = (1 + w * k) * Math.exp(-w * k);
+  return 1 - rest * (1 - ease(seg(k, .75, 1)));   // the last tiny remainder fades out, so the move ends exactly on 1
+}
+// The same as a move in time: 0 before t0, the spring over dur seconds, 1 after. Overshooting presets go above 1.
+const springTo = (t, t0, dur, preset = 'settle') => springK((t - t0) / dur, preset);
+// An easing for kf() and anything else that takes one: kf(t, keys, springEase('overshoot')).
+const springEase = preset => x => springK(x, preset);
+// Anticipation: a small wind-up the other way before the move. Eases from 0 to -amt over `pre` s before t0, holds
+// there for an instant and then springs to 1. Use it as the k of a lerp: lerp(a, b, anticipate(t, 1, .5, 'overshoot')).
+function anticipate(t, t0, dur, preset = 'settle', amt = .15, pre = Math.min(.25, dur * .5)) {
+  if (t < t0) return -amt * ease(seg(t, t0 - pre, t0));
+  return lerp(-amt, 1, springTo(t, t0, dur, preset));
+}
+// A spring's speed (per second) at t, for squash and stretch that follows the move. Pure: a short finite difference.
+const springVel = (t, t0, dur, preset = 'settle', h = 1 / 48) => (springTo(t, t0, dur, preset) - springTo(t - h, t0, dur, preset)) / h;
+// A hop with acting: a crouch (anticipation) before t0, a stretch on takeoff, round at the top, a parabola down by t1,
+// then the landing: o.land = 'bouncy' (default) adds a small rebound hop, 'settle' only a squash that springs back.
+// The squash stays within ±o.sq (0.2), so Clawd keeps his shape. h in body units. Returns { dy, sq } for clawd().
+function hop(t, t0, t1, h = 2, o = {}) {
+  const pre = o.pre ?? .16, m = o.sq ?? .2, c = .8 * m, s = .7 * m, fl = t1 - t0;
+  if (t < t0 - pre) return { dy: 0, sq: 0 };
+  if (t < t0) return { dy: 0, sq: c * ease(seg(t, t0 - pre, t0)) };   // crouch
+  if (t < t1) {
+    const k = (t - t0) / fl;
+    const sq = k < .15 ? lerp(c, -s, ease(k / .15)) : k < .5 ? lerp(-s, 0, ease((k - .15) / .35)) : -.35 * s * ease((k - .5) / .5);
+    return { dy: -h * 4 * k * (1 - k), sq };
+  }
+  // landing: a squash on each contact that springs back through a slight stretch; the rebound is sqrt(reb) as long
+  const a = t - t1, reb = (o.land || 'bouncy') === 'bouncy' ? (o.rebound ?? .14) : 0, a1 = .07, rd = fl * Math.sqrt(reb);
+  const kick = x => x < 0 ? 0 : x < .04 ? ease(x / .04) : 1 - springK((x - .04) / .4, 'overshoot');
+  let sq = m * kick(a), dy = 0;
+  if (reb) {
+    if (a > a1 && a < a1 + rd) { const u = (a - a1) / rd; dy = -reb * h * 4 * u * (1 - u); }
+    sq += .45 * m * kick(a - a1 - rd);
+  }
+  return { dy, sq: clamp(sq, -m, m) };
+}
 // Hold each drawing for two frames (12 drawings a second), like hand-drawn animation "on twos". Wrap a shot's t in it.
 const onTwos = t => Math.floor(t * 12 + 1e-6) / 12;
 // Point on a thrown or jumping arc from p0 to p1, peaking h px above the straight line; k = 0..1 along the flight.
@@ -198,11 +286,11 @@ function paintAt(pts, o) {
   // the outline is one continuous tapered stroke, not a stroke per side
   if (o.ink !== null) {
     brush.noWash(); brush.noFill(); brush.noHatch(); brush.set(o.br || 'ink', o.ink || PAL.ink, o.sw ?? 1);
-    brush.beginShape(o.curv || 0); for (const p of pts) brush.vertex(p[0], p[1]); brush.endShape(true);
+    inkBoil(pts, P => { brush.beginShape(o.curv || 0); for (const p of P) brush.vertex(p[0], p[1]); brush.endShape(true); });
   }
 }
 function inkLine(pts, sw = 1, col = PAL.ink, br = 'ink', curv = .5) {
-  centred(pts, (P) => { brush.noFill(); brush.noWash(); brush.noHatch(); brush.set(br, col, sw); brush.spline(P, curv); });
+  centred(pts, (P) => { brush.noFill(); brush.noWash(); brush.noHatch(); brush.set(br, col, sw); inkBoil(P, Q => brush.spline(Q, curv)); });
 }
 
 // ---------- lettering (drawn on the 2D compositor, under the paper grain) ----------
@@ -218,7 +306,7 @@ function sfx(txt, x, y, size, color, age, o = {}) {
 }
 function drawLetters(c) {
   for (const L of LETTERS) {
-    const k = L.pop != null ? backOut(L.pop) : 1; if (k <= .01) continue;
+    const k = L.pop != null ? springK(L.pop, L.spring || 'overshoot') : 1; if (k <= .01) continue;
     c.save(); c.translate(L.x, L.y); c.rotate(L.rot || 0); c.scale(k, k); c.globalAlpha = L.alpha ?? 1;
     c.font = L.font || `${L.size}px "Permanent Marker", "Comic Sans MS", cursive`;
     c.textAlign = L.align || 'center'; c.textBaseline = 'middle';
@@ -288,7 +376,7 @@ function draw() {
   if (!window.ready) return;
   LETTERS = []; CAM = LAST_CAM = null;
   push(); scale(RS); translate(-W / 2, -H / 2);
-  BOILN = Math.floor(T * BOIL); CLAWD_N = 0; boilSeed('frame'); noiseSeed(77);
+  BOILP = boilParams(); BOILO = null; BOILN = Math.floor(T * BOILP.fps); CLAWD_N = 0; boilSeed('frame'); noiseSeed(77);
   image(paperG, 0, 0);
   drawWorld(T);
   pop();

@@ -15,7 +15,8 @@
   // A scene to show when the page is opened by hand (renderer pages get theirs before every frame).
   window.SCENE = window.SCENE || { template: 'host', setting: 'sky', mood: 'happy', prop: 'sun', caption: 'Inkframe', duration: 4, voice: '' };
   window.EXTRA_FONTS = [['700 80px Caveat', 'Аа']];
-  const PROJECT = { duration: 600, bpm: 96, offset: 0, renderScale: .5 };
+  // boil: how the line re-draws itself (see core.js); a scene's SCENE.boil overrides it, a style pack will set it
+  const PROJECT = { duration: 600, bpm: 96, offset: 0, renderScale: .5, boil: { fps: 12, amp: 1, inkOnly: false, holdStill: false } };
 </script>
 <script src="../node_modules/p5/lib/p5.min.js"></script>
 <script src="../node_modules/p5.brush/dist/p5.brush.js"></script>
